@@ -23,13 +23,17 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME) .
 
 # Build for all supported platforms
-build-all: build-linux-arm64 build-linux-arm32 build-linux-amd64 build-windows-amd64 build-darwin-amd64
+build-all: build-linux-arm64 build-pi5 build-linux-arm32 build-linux-amd64 build-windows-amd64 build-darwin-amd64
 
-# Build for Raspberry Pi 64-bit
+# Build for Raspberry Pi 64-bit (Pi 3B+, Pi 4, Pi 5, Pi Zero 2W)
 build-linux-arm64:
 	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-linux-arm64 .
 
-# Build for Raspberry Pi 32-bit
+# Build for Raspberry Pi 5 (optimized)
+build-pi5:
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS) -tags netgo -a -o $(BINARY_NAME)-pi5-arm64 .
+
+# Build for Raspberry Pi 32-bit (Pi 2, Pi 3, Pi Zero)
 build-linux-arm32:
 	GOOS=linux GOARCH=arm GOARM=7 $(GOBUILD) $(LDFLAGS) -o $(BINARY_NAME)-linux-arm32 .
 
@@ -82,8 +86,9 @@ help:
 	@echo "Available targets:"
 	@echo "  build              - Build for current platform"
 	@echo "  build-all          - Build for all supported platforms"
-	@echo "  build-linux-arm64  - Build for Raspberry Pi 64-bit"
-	@echo "  build-linux-arm32  - Build for Raspberry Pi 32-bit"
+	@echo "  build-linux-arm64  - Build for Raspberry Pi 64-bit (Pi 3B+, Pi 4, Pi 5, Zero 2W)"
+	@echo "  build-pi5          - Build optimized for Raspberry Pi 5"
+	@echo "  build-linux-arm32  - Build for Raspberry Pi 32-bit (Pi 2, Pi 3, Zero)"
 	@echo "  build-linux-amd64  - Build for Linux x64"
 	@echo "  build-windows-amd64 - Build for Windows x64"
 	@echo "  build-darwin-amd64 - Build for macOS x64"

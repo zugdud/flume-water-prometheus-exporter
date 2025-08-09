@@ -27,7 +27,7 @@ A Prometheus exporter for [Flume](https://flumewater.com/) water monitoring devi
 
 **Pre-compiled binaries are available for Raspberry Pi:**
 
-1. **Raspberry Pi 4 / Pi 400 / Pi Zero 2 W (64-bit):**
+1. **Raspberry Pi 5 / Pi 4 / Pi 400 / Pi Zero 2 W (64-bit):**
    ```bash
    wget https://github.com/flume-water-prometheus-exporter/releases/latest/download/flume-exporter-linux-arm64
    chmod +x flume-exporter-linux-arm64
@@ -47,12 +47,54 @@ A Prometheus exporter for [Flume](https://flumewater.com/) water monitoring devi
 git clone https://github.com/flume-water-prometheus-exporter.git
 cd flume-water-prometheus-exporter
 
-# For Raspberry Pi (cross-compile)
+# For cross-compilation (from development machine)
 GOOS=linux GOARCH=arm64 go build -o flume-exporter-linux-arm64 .    # 64-bit Pi
 GOOS=linux GOARCH=arm GOARM=7 go build -o flume-exporter-linux-arm32 .  # 32-bit Pi
 
-# For local development
-go build -o flume-exporter
+# For building directly on Raspberry Pi 5 with Go 1.23+
+go build -o flume-exporter .
+
+# Using Makefile for optimized builds
+make build-pi5          # Optimized for Pi 5
+make build-linux-arm64  # General 64-bit ARM
+make build-all          # All platforms
+```
+
+### Building on Raspberry Pi 5
+
+**Requirements:**
+- Raspberry Pi OS (64-bit) 
+- Go 1.23+ installed
+
+**Install Go 1.23 on Pi 5:**
+```bash
+# Remove old Go version if present
+sudo rm -rf /usr/local/go
+
+# Download and install Go 1.23 for ARM64
+wget https://go.dev/dl/go1.23.4.linux-arm64.tar.gz
+sudo tar -C /usr/local -xzf go1.23.4.linux-arm64.tar.gz
+
+# Add to PATH (add to ~/.bashrc for permanent)
+export PATH=$PATH:/usr/local/go/bin
+```
+
+**Build the exporter:**
+```bash
+git clone https://github.com/flume-water-prometheus-exporter.git
+cd flume-water-prometheus-exporter
+
+# Simple build script for Pi 5 (recommended)
+chmod +x build-pi5.sh
+./build-pi5.sh
+
+# Or manual build
+go mod tidy
+go build -o flume-exporter .
+
+# Or use Makefile targets
+make build-pi5          # Pi 5 optimized
+make build-linux-arm64  # Generic ARM64
 ```
 
 ### Using Go Install
@@ -110,11 +152,15 @@ export METRICS_PATH="/metrics"
 
 1. **Transfer files to your Raspberry Pi:**
    ```bash
-   # On your development machine
-   scp flume-exporter-linux-arm64 install-raspberry-pi.sh pi@your-pi-ip:~/
+   # For Raspberry Pi 5 (optimized build)
+   scp flume-exporter-pi5-arm64 install-raspberry-pi.sh pi@your-pi-ip:~/
    
-   # Or for 32-bit Pi
-   scp flume-exporter-linux-arm32 install-raspberry-pi.sh pi@your-pi-ip:~/
+   # For other Pi models
+   scp flume-exporter-linux-arm64 install-raspberry-pi.sh pi@your-pi-ip:~/   # 64-bit
+   scp flume-exporter-linux-arm32 install-raspberry-pi.sh pi@your-pi-ip:~/   # 32-bit
+   
+   # Or build directly on Pi 5
+   scp build-pi5.sh install-raspberry-pi.sh *.go go.mod go.sum Makefile pi@your-pi-ip:~/
    ```
 
 2. **SSH to your Raspberry Pi and run the installer:**

@@ -9,18 +9,24 @@ echo "==========================================================="
 
 # Detect architecture
 ARCH=$(uname -m)
+PI_MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Unknown")
+
 case $ARCH in
     aarch64|arm64)
         BINARY="flume-exporter-linux-arm64"
-        echo "✓ Detected 64-bit ARM architecture"
+        echo "✓ Detected 64-bit ARM architecture ($PI_MODEL)"
+        if [[ "$PI_MODEL" == *"Pi 5"* ]]; then
+            echo "✓ Raspberry Pi 5 detected - using optimized ARM64 build"
+        fi
         ;;
     armv7l|armhf)
         BINARY="flume-exporter-linux-arm32"
-        echo "✓ Detected 32-bit ARM architecture"
+        echo "✓ Detected 32-bit ARM architecture ($PI_MODEL)"
         ;;
     *)
         echo "❌ Unsupported architecture: $ARCH"
         echo "This script is designed for Raspberry Pi (ARM) devices only."
+        echo "Detected model: $PI_MODEL"
         exit 1
         ;;
 esac
@@ -38,16 +44,25 @@ command -v systemctl >/dev/null 2>&1 || { echo "❌ systemctl is required but no
 echo
 echo "Step 1: Installing binary..."
 
-# Check if binary exists in current directory
-if [[ -f "./$BINARY" ]]; then
+# Check for available binaries (prefer Pi 5 optimized)
+PI5_BINARY="flume-exporter-pi5-arm64"
+GENERIC_BINARY="flume-exporter"
+
+if [[ "$PI_MODEL" == *"Pi 5"* && -f "./$PI5_BINARY" ]]; then
+    echo "✓ Found Pi 5 optimized binary: $PI5_BINARY"
+    sudo cp "./$PI5_BINARY" /usr/local/bin/flume-exporter
+elif [[ -f "./$GENERIC_BINARY" ]]; then
+    echo "✓ Found generic binary: $GENERIC_BINARY"
+    sudo cp "./$GENERIC_BINARY" /usr/local/bin/flume-exporter
+elif [[ -f "./$BINARY" ]]; then
     echo "✓ Found $BINARY in current directory"
     sudo cp "./$BINARY" /usr/local/bin/flume-exporter
 else
-    echo "❌ Binary $BINARY not found in current directory"
-    echo "Please ensure you have the correct binary file for your architecture."
-    echo "You can build it with:"
-    echo "  GOOS=linux GOARCH=arm64 go build -o flume-exporter-linux-arm64 .    # 64-bit"
-    echo "  GOOS=linux GOARCH=arm GOARM=7 go build -o flume-exporter-linux-arm32 .  # 32-bit"
+    echo "❌ No suitable binary found in current directory"
+    echo "Available options to build:"
+    echo "  ./build-pi5.sh                                                         # Pi 5 optimized"
+    echo "  GOOS=linux GOARCH=arm64 go build -o flume-exporter-linux-arm64 .      # 64-bit ARM"
+    echo "  GOOS=linux GOARCH=arm GOARM=7 go build -o flume-exporter-linux-arm32 . # 32-bit ARM"
     exit 1
 fi
 
