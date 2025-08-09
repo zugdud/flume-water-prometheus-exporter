@@ -1,0 +1,19 @@
+# Prometheus configuration for Flume Water Exporter
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+# Scrape configuration
+scrape_configs:
+  # Flume Water Exporter
+  - job_name: 'flume-water'
+    static_configs:
+      - targets: ['flume-exporter:8080']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

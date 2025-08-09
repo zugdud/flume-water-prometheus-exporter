@@ -1,0 +1,14 @@
+# Flume API Credentials (REQUIRED)
+# Get these from: https://portal.flumewater.com/ -> Settings -> Generate API Client
+FLUME_CLIENT_ID=your_client_id_here
+FLUME_CLIENT_SECRET=your_client_secret_here
+FLUME_USERNAME=your_flume_username
+FLUME_PASSWORD=your_flume_password
+
+# Server Configuration (OPTIONAL)
+LISTEN_ADDRESS=:8080
+METRICS_PATH=/metrics
+BASE_URL=https://api.flumewater.com
+
+# Copy this file to .env and fill in your credentials:
+# cp config.example .env

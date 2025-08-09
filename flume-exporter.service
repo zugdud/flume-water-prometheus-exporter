@@ -1,0 +1,35 @@
+[Unit]
+Description=Flume Water Prometheus Exporter
+Documentation=https://github.com/flume-water-prometheus-exporter
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/local/bin/flume-exporter
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flume-exporter
+
+# Environment variables (alternatively use EnvironmentFile)
+# Environment=FLUME_CLIENT_ID=your_client_id
+# Environment=FLUME_CLIENT_SECRET=your_client_secret
+# Environment=FLUME_USERNAME=your_username
+# Environment=FLUME_PASSWORD=your_password
+
+# Use environment file instead (recommended for security)
+EnvironmentFile=/etc/flume-exporter/config.env
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=multi-user.target
