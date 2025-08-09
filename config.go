@@ -30,7 +30,7 @@ type Config struct {
 // NewConfig creates a new configuration with default values
 func NewConfig() *Config {
 	return &Config{
-		ListenAddress:  ":8080",
+		ListenAddress:  ":9193",
 		MetricsPath:    "/metrics",
 		ScrapeInterval: 30 * time.Second,
 		Timeout:        10 * time.Second,
