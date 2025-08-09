@@ -118,7 +118,7 @@ func (m *Metrics) UpdateCurrentFlowRate(deviceID, deviceName, location string, f
 func (m *Metrics) UpdateWaterUsage(deviceID, deviceName, location string, queryResp *QueryResponse) {
 	for _, data := range queryResp.Data {
 		bucket := data.Bucket
-		
+
 		// Calculate total usage for this time period
 		var totalUsage float64
 		for _, queryData := range data.QueryData {
@@ -165,7 +165,7 @@ func (m *Metrics) UpdateDeviceInfo(device Device) {
 func (m *Metrics) RecordScrapeMetrics(endpoint string, duration time.Duration, success bool) {
 	m.scrapeDuration.WithLabelValues(endpoint).Set(duration.Seconds())
 	m.lastScrapeTime.WithLabelValues(endpoint).Set(float64(time.Now().Unix()))
-	
+
 	successValue := 0.0
 	if success {
 		successValue = 1.0
@@ -195,20 +195,20 @@ func (e *FlumeExporter) CollectMetrics() {
 	start := time.Now()
 	devices, err := e.client.GetDevices()
 	duration := time.Since(start)
-	
+
 	if err != nil {
 		log.Printf("Error getting devices: %v", err)
 		e.metrics.RecordScrapeMetrics("devices", duration, false)
 		return
 	}
-	
+
 	e.metrics.RecordScrapeMetrics("devices", duration, true)
 	log.Printf("Found %d devices", len(devices))
 
 	// Process each device
 	for _, device := range devices {
 		log.Printf("Processing device %s (%s)", device.ID, device.Location.Name)
-		
+
 		// Update device info
 		e.metrics.UpdateDeviceInfo(device)
 
@@ -222,7 +222,7 @@ func (e *FlumeExporter) CollectMetrics() {
 		start = time.Now()
 		flowRate, err := e.client.GetCurrentFlowRate(device.ID)
 		duration = time.Since(start)
-		
+
 		if err != nil {
 			log.Printf("Error getting flow rate for device %s: %v", device.ID, err)
 			e.metrics.RecordScrapeMetrics("flow_rate", duration, false)
@@ -235,11 +235,11 @@ func (e *FlumeExporter) CollectMetrics() {
 		// Get hourly usage for the last hour
 		now := time.Now()
 		hourAgo := now.Add(-1 * time.Hour)
-		
+
 		start = time.Now()
 		hourlyUsage, err := e.client.QueryWaterUsage(device.ID, "HR", hourAgo, &now)
 		duration = time.Since(start)
-		
+
 		if err != nil {
 			log.Printf("Error getting hourly usage for device %s: %v", device.ID, err)
 			e.metrics.RecordScrapeMetrics("hourly_usage", duration, false)
@@ -250,11 +250,11 @@ func (e *FlumeExporter) CollectMetrics() {
 
 		// Get daily usage for today
 		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		
+
 		start = time.Now()
 		dailyUsage, err := e.client.QueryWaterUsage(device.ID, "DAY", today, &now)
 		duration = time.Since(start)
-		
+
 		if err != nil {
 			log.Printf("Error getting daily usage for device %s: %v", device.ID, err)
 			e.metrics.RecordScrapeMetrics("daily_usage", duration, false)
@@ -269,14 +269,7 @@ func (e *FlumeExporter) CollectMetrics() {
 
 // StartPeriodicCollection starts periodic metric collection
 func (e *FlumeExporter) StartPeriodicCollection(interval time.Duration) {
-	// Initial authentication
-	log.Println("Authenticating with Flume API...")
-	if err := e.client.Authenticate(); err != nil {
-		log.Fatalf("Failed to authenticate: %v", err)
-	}
-	log.Println("Authentication successful")
-
-	// Initial collection
+	// Initial collection (authentication will happen automatically on first API call)
 	e.CollectMetrics()
 
 	// Start periodic collection

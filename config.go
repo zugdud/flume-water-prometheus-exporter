@@ -45,8 +45,8 @@ func LoadConfig() (*Config, error) {
 	// Define command line flags
 	flag.StringVar(&config.ClientID, "client-id", "", "Flume API client ID")
 	flag.StringVar(&config.ClientSecret, "client-secret", "", "Flume API client secret")
-	flag.StringVar(&config.Username, "username", "", "Flume username")
-	flag.StringVar(&config.Password, "password", "", "Flume password")
+	flag.StringVar(&config.Username, "username", "", "Flume account email address")
+	flag.StringVar(&config.Password, "password", "", "Flume account password")
 	flag.StringVar(&config.ListenAddress, "listen-address", config.ListenAddress, "Address to listen on")
 	flag.StringVar(&config.MetricsPath, "metrics-path", config.MetricsPath, "Path under which to expose metrics")
 	flag.DurationVar(&config.ScrapeInterval, "scrape-interval", config.ScrapeInterval, "Interval between metric scrapes")
@@ -86,7 +86,7 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("client secret is required (set via --client-secret flag or FLUME_CLIENT_SECRET env var)")
 	}
 	if config.Username == "" {
-		return nil, fmt.Errorf("username is required (set via --username flag or FLUME_USERNAME env var)")
+		return nil, fmt.Errorf("email address is required (set via --username flag or FLUME_USERNAME env var)")
 	}
 	if config.Password == "" {
 		return nil, fmt.Errorf("password is required (set via --password flag or FLUME_PASSWORD env var)")

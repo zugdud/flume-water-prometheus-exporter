@@ -2,7 +2,7 @@
 # Get these from: https://portal.flumewater.com/ -> Settings -> Generate API Client
 FLUME_CLIENT_ID=your_client_id_here
 FLUME_CLIENT_SECRET=your_client_secret_here
-FLUME_USERNAME=your_flume_username
+FLUME_USERNAME=your_email@example.com
 FLUME_PASSWORD=your_flume_password
 
 # Server Configuration (OPTIONAL)
