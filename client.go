@@ -32,9 +32,9 @@ type TokenData struct {
 	RefreshToken string    `json:"refresh_token"`
 	TokenType    string    `json:"token_type"`
 	ExpiresIn    int       `json:"expires_in"`
-	ExpiryTime  time.Time `json:"expiry_time"`
-	Username    string    `json:"username"`
-	ClientID    string    `json:"client_id"`
+	ExpiryTime   time.Time `json:"expiry_time"`
+	Username     string    `json:"username"`
+	ClientID     string    `json:"client_id"`
 }
 
 // NewFlumeClient creates a new Flume API client
@@ -46,7 +46,7 @@ func NewFlumeClient(config *Config) *FlumeClient {
 		homeDir = "."
 	}
 	tokenFile := filepath.Join(homeDir, ".flume_exporter_tokens.json")
-	
+
 	client := &FlumeClient{
 		baseURL: config.BaseURL,
 		httpClient: &http.Client{
@@ -56,12 +56,12 @@ func NewFlumeClient(config *Config) *FlumeClient {
 		clientSecret: config.ClientSecret,
 		username:     config.Username,
 		password:     config.Password,
-		tokenFile:   tokenFile,
+		tokenFile:    tokenFile,
 	}
-	
+
 	// Try to load existing tokens
 	client.loadTokens()
-	
+
 	return client
 }
 
@@ -70,25 +70,25 @@ func (c *FlumeClient) loadTokens() {
 	if c.tokenFile == "" {
 		return
 	}
-	
+
 	data, err := os.ReadFile(c.tokenFile)
 	if err != nil {
 		log.Printf("No existing tokens found (this is normal for first run): %v", err)
 		return
 	}
-	
+
 	var tokenData TokenData
 	if err := json.Unmarshal(data, &tokenData); err != nil {
 		log.Printf("Failed to parse token file: %v", err)
 		return
 	}
-	
+
 	// Validate that tokens belong to the current user/client
 	if tokenData.Username != c.username || tokenData.ClientID != c.clientID {
 		log.Printf("Token file contains tokens for different user/client, ignoring")
 		return
 	}
-	
+
 	// Check if tokens are still valid
 	if time.Now().Before(tokenData.ExpiryTime) {
 		c.accessToken = tokenData.AccessToken
@@ -105,41 +105,47 @@ func (c *FlumeClient) saveTokens() error {
 	if c.tokenFile == "" {
 		return nil
 	}
-	
+
 	tokenData := TokenData{
 		AccessToken:  c.accessToken,
 		RefreshToken: c.refreshToken,
-		ExpiryTime:  c.tokenExpiry,
-		Username:    c.username,
-		ClientID:    c.clientID,
+		ExpiryTime:   c.tokenExpiry,
+		Username:     c.username,
+		ClientID:     c.clientID,
 	}
-	
+
 	data, err := json.MarshalIndent(tokenData, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal token data: %w", err)
 	}
-	
+
 	// Ensure directory exists
 	dir := filepath.Dir(c.tokenFile)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create token directory: %w", err)
 	}
-	
+
 	// Write with restrictive permissions
 	if err := os.WriteFile(c.tokenFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write token file: %w", err)
 	}
-	
+
 	log.Printf("Tokens saved to: %s", c.tokenFile)
 	return nil
 }
 
-// TokenResponse represents the response from the token endpoint
+// TokenResponse represents the response from the Flume OAuth token endpoint
 type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
+	Success bool   `json:"success"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    []struct {
+		TokenType    string `json:"token_type"`
+		AccessToken  string `json:"access_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		RefreshToken string `json:"refresh_token"`
+	} `json:"data"`
+	Count int `json:"count"`
 }
 
 // Device represents a Flume device
@@ -222,7 +228,7 @@ func (c *FlumeClient) ensureValidToken() error {
 // refreshAccessToken refreshes the access token using the refresh token
 func (c *FlumeClient) refreshAccessToken() error {
 	log.Printf("refreshAccessToken: Attempting to refresh token...")
-	
+
 	tokenData := map[string]string{
 		"grant_type":    "refresh_token",
 		"client_id":     c.clientID,
@@ -262,14 +268,21 @@ func (c *FlumeClient) refreshAccessToken() error {
 		return fmt.Errorf("failed to decode refresh token response: %w", err)
 	}
 
-	log.Printf("refreshAccessToken: Successfully refreshed token, expires in %d seconds", tokenResp.ExpiresIn)
+	// Validate response structure
+	if !tokenResp.Success || len(tokenResp.Data) == 0 {
+		return fmt.Errorf("refresh response indicates failure or no data: success=%v, count=%d", tokenResp.Success, tokenResp.Count)
+	}
 
-	c.accessToken = tokenResp.AccessToken
-	if tokenResp.RefreshToken != "" {
-		c.refreshToken = tokenResp.RefreshToken
+	refreshTokenData := tokenResp.Data[0] // Get first token from data array
+
+	log.Printf("refreshAccessToken: Successfully refreshed token, expires in %d seconds", refreshTokenData.ExpiresIn)
+
+	c.accessToken = refreshTokenData.AccessToken
+	if refreshTokenData.RefreshToken != "" {
+		c.refreshToken = refreshTokenData.RefreshToken
 	}
 	// Set new expiry time
-	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	c.tokenExpiry = time.Now().Add(time.Duration(refreshTokenData.ExpiresIn) * time.Second)
 
 	// Save the refreshed tokens
 	if err := c.saveTokens(); err != nil {
@@ -348,15 +361,22 @@ func (c *FlumeClient) Authenticate() error {
 		return fmt.Errorf("failed to decode token response: %w", err)
 	}
 
-	log.Printf("Authenticate: Successfully obtained token, expires in %d seconds", tokenResp.ExpiresIn)
-	log.Printf("Authenticate: Token type: %s", tokenResp.TokenType)
-	log.Printf("Authenticate: Access token length: %d", len(tokenResp.AccessToken))
-	log.Printf("Authenticate: Refresh token length: %d", len(tokenResp.RefreshToken))
+	// Validate response structure
+	if !tokenResp.Success || len(tokenResp.Data) == 0 {
+		return fmt.Errorf("authentication response indicates failure or no data: success=%v, count=%d", tokenResp.Success, tokenResp.Count)
+	}
 
-	c.accessToken = tokenResp.AccessToken
-	c.refreshToken = tokenResp.RefreshToken
+	authTokenData := tokenResp.Data[0] // Get first token from data array
+
+	log.Printf("Authenticate: Successfully obtained token, expires in %d seconds", authTokenData.ExpiresIn)
+	log.Printf("Authenticate: Token type: %s", authTokenData.TokenType)
+	log.Printf("Authenticate: Access token length: %d", len(authTokenData.AccessToken))
+	log.Printf("Authenticate: Refresh token length: %d", len(authTokenData.RefreshToken))
+
+	c.accessToken = authTokenData.AccessToken
+	c.refreshToken = authTokenData.RefreshToken
 	// Set expiry time
-	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	c.tokenExpiry = time.Now().Add(time.Duration(authTokenData.ExpiresIn) * time.Second)
 
 	// Validate that we actually got tokens
 	if c.accessToken == "" {
@@ -379,7 +399,7 @@ func (c *FlumeClient) clearTokens() {
 	c.accessToken = ""
 	c.refreshToken = ""
 	c.tokenExpiry = time.Time{}
-	
+
 	if c.tokenFile != "" {
 		if err := os.Remove(c.tokenFile); err != nil {
 			log.Printf("Warning: Failed to remove token file: %v", err)
@@ -392,14 +412,14 @@ func (c *FlumeClient) clearTokens() {
 // AuthenticateWithRetry attempts authentication with retry logic
 func (c *FlumeClient) AuthenticateWithRetry(maxRetries int) error {
 	var lastErr error
-	
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		log.Printf("Authentication attempt %d/%d", attempt, maxRetries)
-		
+
 		if err := c.Authenticate(); err != nil {
 			lastErr = err
 			log.Printf("Authentication attempt %d failed: %v", attempt, maxRetries)
-			
+
 			if attempt < maxRetries {
 				// Clear any partial tokens and wait before retry
 				c.clearTokens()
@@ -412,7 +432,7 @@ func (c *FlumeClient) AuthenticateWithRetry(maxRetries int) error {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("authentication failed after %d attempts, last error: %w", maxRetries, lastErr)
 }
 
@@ -550,33 +570,33 @@ func (c *FlumeClient) ValidateAuthentication() error {
 	if c.accessToken == "" {
 		return fmt.Errorf("no access token available")
 	}
-	
+
 	// Make a simple API call to test authentication
 	req, err := http.NewRequest("GET", c.baseURL+"/me", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create validation request: %w", err)
 	}
-	
+
 	req.Header.Set("Authorization", "Bearer "+c.accessToken)
-	
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send validation request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Token is invalid, clear it and force re-authentication
 		log.Printf("Validation failed: Token is unauthorized, clearing tokens")
 		c.clearTokens()
 		return fmt.Errorf("authentication token is invalid")
 	}
-	
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("validation request failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	
+
 	log.Printf("Authentication validation successful")
 	return nil
 }
@@ -590,17 +610,17 @@ func (c *FlumeClient) GetAuthenticationStatus() map[string]interface{} {
 		"is_expired":        c.isTokenExpired(),
 		"token_file":        c.tokenFile,
 	}
-	
+
 	if c.accessToken != "" {
 		status["access_token_length"] = len(c.accessToken)
 		status["access_token_preview"] = c.accessToken[:min(10, len(c.accessToken))] + "..."
 	}
-	
+
 	if c.refreshToken != "" {
 		status["refresh_token_length"] = len(c.refreshToken)
 		status["refresh_token_preview"] = c.refreshToken[:min(10, len(c.refreshToken))] + "..."
 	}
-	
+
 	return status
 }
 
