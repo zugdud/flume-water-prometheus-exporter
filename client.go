@@ -24,6 +24,7 @@ type FlumeClient struct {
 	password     string
 	tokenExpiry  time.Time
 	tokenFile    string
+	rateLimiter  *RateLimiter
 }
 
 // TokenData represents the token data structure for persistence
@@ -57,6 +58,7 @@ func NewFlumeClient(config *Config) *FlumeClient {
 		username:     config.Username,
 		password:     config.Password,
 		tokenFile:    tokenFile,
+		rateLimiter:  NewRateLimiter(config.APIMinInterval),
 	}
 
 	// Try to load existing tokens
@@ -438,6 +440,9 @@ func (c *FlumeClient) AuthenticateWithRetry(maxRetries int) error {
 
 // GetDevices retrieves all devices for the authenticated user
 func (c *FlumeClient) GetDevices() ([]Device, error) {
+	// Apply rate limiting
+	c.rateLimiter.Wait()
+
 	// Ensure we have a valid token before making the request
 	if err := c.ensureValidToken(); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
@@ -478,41 +483,112 @@ func (c *FlumeClient) GetDevices() ([]Device, error) {
 }
 
 // GetCurrentFlowRate retrieves the current flow rate for a device
+// Since Flume API doesn't have a direct current flow rate endpoint,
+// we calculate it from recent water usage data
 func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, error) {
+	// Apply rate limiting
+	c.rateLimiter.Wait()
+
 	// Ensure we have a valid token before making the request
 	if err := c.ensureValidToken(); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/me/devices/%s/current_interval", c.baseURL, deviceID)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create flow rate request: %w", err)
+	// Get recent water usage data (last 5 minutes) to calculate current flow rate
+	now := time.Now()
+	fiveMinutesAgo := now.Add(-5 * time.Minute)
+
+	query := Query{
+		RequestID:     "flow_rate_calc",
+		Bucket:        "MIN", // Use minute-level data for more accurate flow rate
+		SinceDatetime: fiveMinutesAgo.Format("2006-01-02 15:04:05"),
+		UntilDatetime: now.Format("2006-01-02 15:04:05"),
 	}
 
+	queryReq := QueryRequest{
+		Queries: []Query{query},
+	}
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal flow rate query request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/me/devices/%s/query", c.baseURL, deviceID)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create flow rate query request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.accessToken)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send flow rate request: %w", err)
+		return nil, fmt.Errorf("failed to send flow rate query request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("flow rate request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("flow rate query request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var flowRate FlowRateResponse
-	if err := json.NewDecoder(resp.Body).Decode(&flowRate); err != nil {
-		return nil, fmt.Errorf("failed to decode flow rate response: %w", err)
+	var queryResp QueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, fmt.Errorf("failed to decode flow rate query response: %w", err)
 	}
 
-	return &flowRate, nil
+	// Calculate current flow rate from the most recent data
+	if len(queryResp.Data) == 0 || len(queryResp.Data[0].QueryData) == 0 {
+		// No recent data available, return 0 flow rate
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	// Get the most recent data point
+	latestData := queryResp.Data[0].QueryData[len(queryResp.Data[0].QueryData)-1]
+	if len(latestData) < 2 {
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	// Extract the water usage value (assuming it's the second element)
+	// The structure might be [timestamp, value, ...]
+	var usage float64
+	switch v := latestData[1].(type) {
+	case float64:
+		usage = v
+	case int:
+		usage = float64(v)
+	case string:
+		// Try to parse string to float
+		if parsed, err := fmt.Sscanf(v, "%f", &usage); err != nil || parsed != 1 {
+			usage = 0.0
+		}
+	default:
+		usage = 0.0
+	}
+
+	// Convert usage to flow rate (gallons per minute)
+	// Since we're using MIN bucket, the value should already be per minute
+	flowRate := usage
+
+	return &FlowRateResponse{
+		Value: flowRate,
+		Units: "gallons_per_minute",
+	}, nil
 }
 
 // QueryWaterUsage queries water usage data for a device
 func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time.Time, until *time.Time) (*QueryResponse, error) {
+	// Apply rate limiting
+	c.rateLimiter.Wait()
+
 	// Ensure we have a valid token before making the request
 	if err := c.ensureValidToken(); err != nil {
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)

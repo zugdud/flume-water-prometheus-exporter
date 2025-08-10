@@ -142,9 +142,10 @@ export METRICS_PATH="/metrics"
 | `-password` | `FLUME_PASSWORD` | *required* | Flume account password |
 | `-listen-address` | `LISTEN_ADDRESS` | `:8080` | Address to listen on |
 | `-metrics-path` | `METRICS_PATH` | `/metrics` | Path for metrics endpoint |
-| `-scrape-interval` | - | `30s` | How often to scrape Flume API |
-| `-timeout` | - | `10s` | HTTP request timeout |
+| `-scrape-interval` | `SCRAPE_INTERVAL` | `30s` | How often to scrape Flume API |
+| `-timeout` | `TIMEOUT` | `10s` | HTTP request timeout |
 | `-base-url` | `BASE_URL` | `https://api.flumewater.com` | Flume API base URL |
+| `-api-min-interval` | `API_MIN_INTERVAL` | `30s` | Minimum interval between Flume API requests (120 requests/hour limit) |
 
 ## Usage
 
@@ -221,7 +222,7 @@ The exporter provides the following metrics:
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
-| `flume_current_flow_rate_gallons_per_minute` | Gauge | Current water flow rate | `device_id`, `device_name`, `location` |
+| `flume_current_flow_rate_gallons_per_minute` | Gauge | Current water flow rate (calculated from recent usage data) | `device_id`, `device_name`, `location` |
 | `flume_hourly_water_usage_gallons` | Gauge | Water usage in the last hour | `device_id`, `device_name`, `location` |  
 | `flume_daily_water_usage_gallons` | Gauge | Water usage today | `device_id`, `device_name`, `location` |
 | `flume_total_water_usage_gallons` | Gauge | Total usage for time period | `device_id`, `device_name`, `location`, `bucket` |
@@ -302,6 +303,29 @@ services:
     restart: unless-stopped
 ```
 
+## Rate Limiting
+
+The Flume Water API has a rate limit of **120 requests per hour** for personal clients. This exporter automatically respects this limit by:
+
+- **Default Configuration**: Limits API requests to a minimum of 30 seconds apart (120 requests/hour)
+- **Configurable**: You can adjust the rate limiting via the `API_MIN_INTERVAL` environment variable or `-api-min-interval` flag
+- **Per-Request Limiting**: Each API call (devices, flow rate, water usage) is individually rate-limited
+- **Automatic Throttling**: The exporter will automatically wait between requests to stay within limits
+
+**Example Rate Limiting Configuration:**
+```bash
+# Conservative: 60 seconds between requests (60 requests/hour)
+export API_MIN_INTERVAL=60s
+
+# Default: 30 seconds between requests (120 requests/hour)  
+export API_MIN_INTERVAL=30s
+
+# Aggressive: 20 seconds between requests (180 requests/hour - may exceed limits)
+export API_MIN_INTERVAL=20s
+```
+
+**Note**: With the default 30-second scrape interval and 30-second API rate limit, the exporter will make approximately 3-4 API calls per device per scrape cycle. For most users with 1-2 devices, this keeps you well within the 120 requests/hour limit.
+
 ## API Reference
 
 This exporter uses the [Flume Personal API](https://flumetech.readme.io/reference/introduction) which provides:
@@ -309,7 +333,7 @@ This exporter uses the [Flume Personal API](https://flumetech.readme.io/referenc
 - **Authentication**: OAuth2 token-based authentication
 - **Device Management**: List and query water monitoring devices
 - **Usage Queries**: Historical and real-time water usage data
-- **Flow Rate**: Current water flow measurements
+- **Flow Rate**: Calculated from recent water usage data (last 5 minutes)
 
 ### Supported Device Types
 
@@ -333,6 +357,16 @@ This exporter uses the [Flume Personal API](https://flumetech.readme.io/referenc
 **High Memory Usage:**
 - Reduce scrape interval if needed
 - Monitor the number of devices and metrics
+
+**Flow Rate Errors (404):**
+- The exporter now calculates flow rate from recent water usage data
+- This resolves the previous 404 error from the non-existent `/current_interval` endpoint
+- Flow rate is calculated using the last 5 minutes of minute-level data
+
+**Rate Limiting Issues:**
+- If you see "429 Too Many Requests" errors, increase your `API_MIN_INTERVAL`
+- The default 30-second interval ensures you stay within the 120 requests/hour limit
+- Monitor your API usage and adjust the rate limiting if needed
 
 ### Logging
 

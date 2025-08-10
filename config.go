@@ -27,6 +27,9 @@ type Config struct {
 
 	// Flume API configuration
 	BaseURL string
+
+	// API rate limiting
+	APIMinInterval time.Duration
 }
 
 // NewConfig creates a new configuration with default values
@@ -37,6 +40,7 @@ func NewConfig() *Config {
 		ScrapeInterval: 30 * time.Second,
 		Timeout:        10 * time.Second,
 		BaseURL:        "https://api.flumewater.com",
+		APIMinInterval: 30 * time.Second, // Default: minimum 30 seconds between API requests (120 requests/hour limit)
 	}
 }
 
@@ -54,7 +58,8 @@ func LoadConfig() (*Config, error) {
 	flag.DurationVar(&config.ScrapeInterval, "scrape-interval", config.ScrapeInterval, "Interval between metric scrapes")
 	flag.DurationVar(&config.Timeout, "timeout", config.Timeout, "Request timeout")
 	flag.StringVar(&config.BaseURL, "base-url", config.BaseURL, "Flume API base URL")
-	
+	flag.DurationVar(&config.APIMinInterval, "api-min-interval", config.APIMinInterval, "Minimum interval between Flume API requests")
+
 	// Add flag to clear tokens
 	clearTokens := flag.Bool("clear-tokens", false, "Clear stored authentication tokens")
 
@@ -68,7 +73,7 @@ func LoadConfig() (*Config, error) {
 			homeDir = "."
 		}
 		tokenFile := filepath.Join(homeDir, ".flume_exporter_tokens.json")
-		
+
 		if err := os.Remove(tokenFile); err != nil {
 			if os.IsNotExist(err) {
 				log.Println("No token file found to clear")
@@ -101,6 +106,27 @@ func LoadConfig() (*Config, error) {
 	}
 	if val := os.Getenv("BASE_URL"); val != "" {
 		config.BaseURL = val
+	}
+	if val := os.Getenv("SCRAPE_INTERVAL"); val != "" {
+		if parsed, err := time.ParseDuration(val); err == nil {
+			config.ScrapeInterval = parsed
+		} else {
+			log.Printf("Warning: Invalid SCRAPE_INTERVAL value '%s', using default: %v", val, config.ScrapeInterval)
+		}
+	}
+	if val := os.Getenv("TIMEOUT"); val != "" {
+		if parsed, err := time.ParseDuration(val); err == nil {
+			config.Timeout = parsed
+		} else {
+			log.Printf("Warning: Invalid TIMEOUT value '%s', using default: %v", val, config.Timeout)
+		}
+	}
+	if val := os.Getenv("API_MIN_INTERVAL"); val != "" {
+		if parsed, err := time.ParseDuration(val); err == nil {
+			config.APIMinInterval = parsed
+		} else {
+			log.Printf("Warning: Invalid API_MIN_INTERVAL value '%s', using default: %v", val, config.APIMinInterval)
+		}
 	}
 
 	// Validate required configuration with helpful error messages

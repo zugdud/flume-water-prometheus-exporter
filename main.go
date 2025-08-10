@@ -28,6 +28,7 @@ func main() {
 	log.Printf("  Scrape Interval: %s", config.ScrapeInterval)
 	log.Printf("  Timeout: %s", config.Timeout)
 	log.Printf("  Base URL: %s", config.BaseURL)
+	log.Printf("  API Min Interval: %s", config.APIMinInterval)
 
 	// Create Flume client
 	client := NewFlumeClient(config)
@@ -37,12 +38,12 @@ func main() {
 	if err := client.ValidateAuthentication(); err != nil {
 		log.Printf("Authentication validation failed: %v", err)
 		log.Println("Attempting to authenticate...")
-		
+
 		// Try to authenticate with retry
 		if err := client.AuthenticateWithRetry(3); err != nil {
 			log.Fatalf("Failed to authenticate after retries: %v", err)
 		}
-		
+
 		log.Println("Authentication successful!")
 	} else {
 		log.Println("Authentication validation successful!")
@@ -57,45 +58,45 @@ func main() {
 	// Setup HTTP server
 	mux := http.NewServeMux()
 	mux.Handle(config.MetricsPath, promhttp.Handler())
-	
+
 	// Add health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		
+
 		// Get authentication status
 		authStatus := client.GetAuthenticationStatus()
-		
+
 		// Try to validate authentication
 		authValid := true
 		if err := client.ValidateAuthentication(); err != nil {
 			authValid = false
 			authStatus["validation_error"] = err.Error()
 		}
-		
+
 		healthData := map[string]interface{}{
-			"status": "healthy",
+			"status":    "healthy",
 			"timestamp": time.Now().Format(time.RFC3339),
 			"authentication": map[string]interface{}{
-				"valid": authValid,
+				"valid":  authValid,
 				"status": authStatus,
 			},
 			"config": map[string]interface{}{
-				"base_url": config.BaseURL,
-				"username": config.Username,
-				"client_id": config.ClientID,
+				"base_url":        config.BaseURL,
+				"username":        config.Username,
+				"client_id":       config.ClientID,
 				"scrape_interval": config.ScrapeInterval.String(),
 			},
 		}
-		
+
 		if !authValid {
 			healthData["status"] = "unhealthy"
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
-		
+
 		jsonData, _ := json.MarshalIndent(healthData, "", "  ")
 		w.Write(jsonData)
 	})
-	
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusOK)
