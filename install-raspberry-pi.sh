@@ -1,193 +1,154 @@
 #!/bin/bash
-set -e
 
 # Flume Water Prometheus Exporter - Raspberry Pi Installation Script
-# This script installs and configures the Flume exporter as a systemd service
+# This script installs the flume-exporter as a systemd service on Raspberry Pi
 
-echo "🌊 Flume Water Prometheus Exporter - Raspberry Pi Installer"
-echo "==========================================================="
+set -e
 
-# Detect architecture
-ARCH=$(uname -m)
-PI_MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Unknown")
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-case $ARCH in
-    aarch64|arm64)
-        BINARY="flume-exporter-linux-arm64"
-        echo "✓ Detected 64-bit ARM architecture ($PI_MODEL)"
-        if [[ "$PI_MODEL" == *"Pi 5"* ]]; then
-            echo "✓ Raspberry Pi 5 detected - using optimized ARM64 build"
-        fi
-        ;;
-    armv7l|armhf)
-        BINARY="flume-exporter-linux-arm32"
-        echo "✓ Detected 32-bit ARM architecture ($PI_MODEL)"
-        ;;
-    *)
-        echo "❌ Unsupported architecture: $ARCH"
-        echo "This script is designed for Raspberry Pi (ARM) devices only."
-        echo "Detected model: $PI_MODEL"
-        exit 1
-        ;;
-esac
+# Function to print colored output
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
 # Check if running as root
 if [[ $EUID -eq 0 ]]; then
-   echo "❌ This script should not be run as root"
-   echo "Please run as a regular user (e.g., pi) with sudo access"
+   print_error "This script should not be run as root. Please run as a regular user with sudo access."
    exit 1
 fi
 
-# Check for required commands
-command -v systemctl >/dev/null 2>&1 || { echo "❌ systemctl is required but not installed. Aborting." >&2; exit 1; }
-
-echo
-echo "Step 1: Installing binary..."
-
-# Check for available binaries (prefer Pi 5 optimized)
-PI5_BINARY="flume-exporter-pi5-arm64"
-GENERIC_BINARY="flume-exporter"
-
-if [[ "$PI_MODEL" == *"Pi 5"* && -f "./$PI5_BINARY" ]]; then
-    echo "✓ Found Pi 5 optimized binary: $PI5_BINARY"
-    sudo cp "./$PI5_BINARY" /usr/local/bin/flume-exporter
-elif [[ -f "./$GENERIC_BINARY" ]]; then
-    echo "✓ Found generic binary: $GENERIC_BINARY"
-    sudo cp "./$GENERIC_BINARY" /usr/local/bin/flume-exporter
-elif [[ -f "./$BINARY" ]]; then
-    echo "✓ Found $BINARY in current directory"
-    sudo cp "./$BINARY" /usr/local/bin/flume-exporter
-else
-    echo "❌ No suitable binary found in current directory"
-    echo "Available options to build:"
-    echo "  ./build-pi5.sh                                                         # Pi 5 optimized"
-    echo "  GOOS=linux GOARCH=arm64 go build -o flume-exporter-linux-arm64 .      # 64-bit ARM"
-    echo "  GOOS=linux GOARCH=arm GOARM=7 go build -o flume-exporter-linux-arm32 . # 32-bit ARM"
+# Check if Go is installed
+if ! command -v go &> /dev/null; then
+    print_error "Go is not installed. Please install Go 1.21+ first."
+    print_status "You can install Go with: sudo apt update && sudo apt install golang-go"
     exit 1
 fi
 
-# Make executable
-sudo chmod +x /usr/local/bin/flume-exporter
-echo "✓ Binary installed to /usr/local/bin/flume-exporter"
+# Check Go version
+GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
+GO_MAJOR=$(echo $GO_VERSION | cut -d. -f1)
+GO_MINOR=$(echo $GO_VERSION | cut -d. -f2)
 
-echo
-echo "Step 2: Creating configuration directory..."
+if [ "$GO_MAJOR" -lt 1 ] || ([ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 21 ]); then
+    print_error "Go version $GO_VERSION is too old. Please install Go 1.21+ first."
+    exit 1
+fi
+
+print_status "Go version $GO_VERSION detected - OK"
+
+# Get current directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Check if we're in the right directory
+if [ ! -f "main.go" ] || [ ! -f "flume-exporter.service" ]; then
+    print_error "This script must be run from the flume-water-prometheus-exporter directory"
+    exit 1
+fi
+
+print_status "Building flume-exporter for ARM64..."
+GOOS=linux GOARCH=arm64 go build -o flume-exporter
+
+if [ ! -f "flume-exporter" ]; then
+    print_error "Build failed - flume-exporter binary not found"
+    exit 1
+fi
+
+print_status "Build successful"
+
+# Create configuration directory
+print_status "Creating configuration directory..."
 sudo mkdir -p /etc/flume-exporter
-echo "✓ Created /etc/flume-exporter"
 
-# Create config file if it doesn't exist
-if [[ ! -f /etc/flume-exporter/config.env ]]; then
+# Check if config file already exists
+if [ -f "/etc/flume-exporter/config.env" ]; then
+    print_warning "Configuration file already exists at /etc/flume-exporter/config.env"
+    read -p "Do you want to overwrite it? (y/N): " -n 1 -r
     echo
-    echo "Step 3: Creating configuration file..."
-    
-    # Prompt for credentials
-    echo "Please enter your Flume API credentials:"
-    read -p "Client ID: " CLIENT_ID
-    read -p "Client Secret: " CLIENT_SECRET
-    read -p "Username: " USERNAME
-    read -s -p "Password: " PASSWORD
-    echo
-    
-    # Create config file
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_status "Keeping existing configuration file"
+    else
+        print_status "Overwriting existing configuration file"
+        sudo rm /etc/flume-exporter/config.env
+    fi
+fi
+
+# Create configuration file if it doesn't exist
+if [ ! -f "/etc/flume-exporter/config.env" ]; then
+    print_status "Creating configuration file..."
     sudo tee /etc/flume-exporter/config.env > /dev/null <<EOF
 # Flume API Credentials
-FLUME_CLIENT_ID=$CLIENT_ID
-FLUME_CLIENT_SECRET=$CLIENT_SECRET
-FLUME_USERNAME=$USERNAME
-FLUME_PASSWORD=$PASSWORD
+FLUME_CLIENT_ID=your_client_id_here
+FLUME_CLIENT_SECRET=your_client_secret_here
+FLUME_USERNAME=your_username_here
+FLUME_PASSWORD=your_password_here
 
 # Server Configuration
-LISTEN_ADDRESS=:8080
-METRICS_PATH=/metrics
-BASE_URL=https://api.flumewater.com
+LISTEN_ADDRESS=:9193
+SCRAPE_INTERVAL=30s
+API_MIN_INTERVAL=30s
 EOF
-    
-    # Secure the config file
-    sudo chown root:root /etc/flume-exporter/config.env
-    sudo chmod 600 /etc/flume-exporter/config.env
-    echo "✓ Configuration saved to /etc/flume-exporter/config.env"
-else
-    echo "✓ Configuration file already exists at /etc/flume-exporter/config.env"
+
+    print_warning "Please edit /etc/flume-exporter/config.env with your actual Flume credentials"
+    print_status "You can edit it with: sudo nano /etc/flume-exporter/config.env"
 fi
 
-echo
-echo "Step 4: Installing systemd service..."
+# Set proper permissions
+print_status "Setting configuration file permissions..."
+sudo chown root:root /etc/flume-exporter/config.env
+sudo chmod 600 /etc/flume-exporter/config.env
 
-# Install service file
-if [[ -f "./flume-exporter.service" ]]; then
-    sudo cp ./flume-exporter.service /etc/systemd/system/
-else
-    # Create service file if not present
-    sudo tee /etc/systemd/system/flume-exporter.service > /dev/null <<'EOF'
-[Unit]
-Description=Flume Water Prometheus Exporter
-Documentation=https://github.com/flume-water-prometheus-exporter
-After=network.target
-Wants=network.target
+# Install binary
+print_status "Installing flume-exporter binary..."
+sudo cp flume-exporter /usr/local/bin/
+sudo chmod +x /usr/local/bin/flume-exporter
 
-[Service]
-Type=simple
-User=pi
-Group=pi
-ExecStart=/usr/local/bin/flume-exporter
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=flume-exporter
-
-# Use environment file for configuration
-EnvironmentFile=/etc/flume-exporter/config.env
-
-# Security settings
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/tmp
-
-[Install]
-WantedBy=multi-user.target
-EOF
-fi
-
-# Reload systemd and enable service
+# Install systemd service
+print_status "Installing systemd service..."
+sudo cp flume-exporter.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable flume-exporter
-echo "✓ Service installed and enabled"
 
-echo
-echo "Step 5: Starting service..."
+# Enable and start service
+print_status "Enabling and starting flume-exporter service..."
+sudo systemctl enable flume-exporter
 sudo systemctl start flume-exporter
 
-# Wait a moment and check status
+# Wait a moment for service to start
 sleep 3
+
+# Check service status
 if sudo systemctl is-active --quiet flume-exporter; then
-    echo "✓ Service started successfully"
+    print_status "flume-exporter service is running successfully!"
+    print_status "Service status:"
+    sudo systemctl status flume-exporter --no-pager -l
 else
-    echo "❌ Service failed to start. Check logs with:"
-    echo "  sudo journalctl -u flume-exporter -f"
+    print_error "flume-exporter service failed to start"
+    print_status "Checking service logs:"
+    sudo journalctl -u flume-exporter --no-pager -l
     exit 1
 fi
 
-echo
-echo "🎉 Installation completed successfully!"
-echo
-echo "Service Status:"
-sudo systemctl status flume-exporter --no-pager -l
-
-echo
-echo "📊 Access your metrics at: http://$(hostname -I | awk '{print $1}'):8080/metrics"
-echo
-echo "Useful commands:"
-echo "  sudo systemctl status flume-exporter    # Check service status"
-echo "  sudo systemctl stop flume-exporter      # Stop service"
-echo "  sudo systemctl start flume-exporter     # Start service"
-echo "  sudo systemctl restart flume-exporter   # Restart service"
-echo "  sudo journalctl -u flume-exporter -f    # View logs"
-echo "  sudo systemctl disable flume-exporter   # Disable auto-start"
-echo
-echo "Configuration file: /etc/flume-exporter/config.env"
-echo "Service file: /etc/systemd/system/flume-exporter.service"
-echo
-echo "🌊 Happy water monitoring! 🌊"
+print_status "Installation completed successfully!"
+print_status ""
+print_status "Next steps:"
+print_status "1. Edit configuration: sudo nano /etc/flume-exporter/config.env"
+print_status "2. Restart service: sudo systemctl restart flume-exporter"
+print_status "3. Test metrics: curl http://localhost:9193/metrics"
+print_status "4. View logs: sudo journalctl -u flume-exporter -f"
+print_status ""
+print_status "The service will automatically start on boot"
+print_status "To stop the service: sudo systemctl stop flume-exporter"
+print_status "To disable auto-start: sudo systemctl disable flume-exporter"

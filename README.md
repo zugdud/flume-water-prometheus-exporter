@@ -303,6 +303,148 @@ services:
     restart: unless-stopped
 ```
 
+## Raspberry Pi Installation
+
+### Prerequisites
+
+- Raspberry Pi 5 running Raspberry Pi OS (or compatible Linux distribution)
+- Go 1.21+ installed (for building from source)
+- Git installed
+
+### Quick Installation (Recommended)
+
+Use the provided installation script for automatic setup:
+
+```bash
+# Make script executable and run
+chmod +x install-raspberry-pi.sh
+./install-raspberry-pi.sh
+```
+
+The script will:
+- Build the exporter for ARM64
+- Install it to `/usr/local/bin/`
+- Create configuration directory and files
+- Install and enable the systemd service
+- Start the service automatically
+
+### Building and Installing
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yourusername/flume-water-prometheus-exporter.git
+   cd flume-water-prometheus-exporter
+   ```
+
+2. **Build for ARM64:**
+   ```bash
+   GOOS=linux GOARCH=arm64 go build -o flume-exporter
+   ```
+
+3. **Install the binary:**
+   ```bash
+   sudo cp flume-exporter /usr/local/bin/
+   sudo chmod +x /usr/local/bin/flume-exporter
+   ```
+
+4. **Create configuration directory:**
+   ```bash
+   sudo mkdir -p /etc/flume-exporter
+   ```
+
+5. **Create environment file:**
+   ```bash
+   sudo nano /etc/flume-exporter/config.env
+   ```
+   
+   Add your Flume credentials:
+   ```bash
+   FLUME_CLIENT_ID=your_client_id
+   FLUME_CLIENT_SECRET=your_client_secret
+   FLUME_USERNAME=your_username
+   FLUME_PASSWORD=your_password
+   LISTEN_ADDRESS=:9193
+   SCRAPE_INTERVAL=30s
+   API_MIN_INTERVAL=30s
+   ```
+
+6. **Set proper permissions:**
+   ```bash
+   sudo chown root:root /etc/flume-exporter/config.env
+   sudo chmod 600 /etc/flume-exporter/config.env
+   ```
+
+7. **Install systemd service:**
+   ```bash
+   sudo cp flume-exporter.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+8. **Enable and start the service:**
+   ```bash
+   sudo systemctl enable flume-exporter
+   sudo systemctl start flume-exporter
+   ```
+
+### Service Management
+
+**Check service status:**
+```bash
+sudo systemctl status flume-exporter
+```
+
+**View logs:**
+```bash
+sudo journalctl -u flume-exporter -f
+```
+
+**Restart service:**
+```bash
+sudo systemctl restart flume-exporter
+```
+
+**Stop service:**
+```bash
+sudo systemctl stop flume-exporter
+```
+
+**Disable service (remove from startup):**
+```bash
+sudo systemctl disable flume-exporter
+```
+
+### Verification
+
+1. **Check if service is running:**
+   ```bash
+   sudo systemctl is-active flume-exporter
+   ```
+
+2. **Test metrics endpoint:**
+   ```bash
+   curl http://localhost:9193/metrics
+   ```
+
+3. **Check service logs for any errors:**
+   ```bash
+   sudo journalctl -u flume-exporter --no-pager -l
+   ```
+
+### Troubleshooting
+
+**Service won't start:**
+- Check configuration file permissions: `ls -la /etc/flume-exporter/`
+- Verify environment file syntax: `sudo cat /etc/flume-exporter/config.env`
+- Check systemd logs: `sudo journalctl -u flume-exporter --no-pager -l`
+
+**Permission denied errors:**
+- Ensure binary is executable: `ls -la /usr/local/bin/flume-exporter`
+- Check service user permissions in `flume-exporter.service`
+
+**Port already in use:**
+- Change `LISTEN_ADDRESS` in config.env to use a different port
+- Check what's using the port: `sudo netstat -tlnp | grep :9193`
+
 ## Rate Limiting
 
 The Flume Water API has a rate limit of **120 requests per hour** for personal clients. This exporter automatically respects this limit by:
