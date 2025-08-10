@@ -33,27 +33,8 @@ func main() {
 	// Create Flume client
 	client := NewFlumeClient(config)
 
-	// Validate authentication before starting
-	log.Println("Validating authentication...")
-	if err := client.ValidateAuthentication(); err != nil {
-		log.Printf("Authentication validation failed: %v", err)
-		log.Println("Attempting to authenticate...")
-
-		// Try to authenticate with retry
-		if err := client.AuthenticateWithRetry(3); err != nil {
-			log.Fatalf("Failed to authenticate after retries: %v", err)
-		}
-
-		log.Println("Authentication successful!")
-	} else {
-		log.Println("Authentication validation successful!")
-	}
-
 	// Create exporter
 	exporter := NewFlumeExporter(client)
-
-	// Start periodic metric collection
-	exporter.StartPeriodicCollection(config.ScrapeInterval)
 
 	// Setup HTTP server
 	mux := http.NewServeMux()
@@ -137,6 +118,33 @@ func main() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Failed to start server: %v", err)
 		}
+	}()
+
+	// Start authentication in background
+	go func() {
+		log.Println("Starting authentication in background...")
+		
+		// Validate authentication before starting
+		log.Println("Validating authentication...")
+		if err := client.ValidateAuthentication(); err != nil {
+			log.Printf("Authentication validation failed: %v", err)
+			log.Println("Attempting to authenticate...")
+
+			// Try to authenticate with retry
+			if err := client.AuthenticateWithRetry(3); err != nil {
+				log.Printf("Failed to authenticate after retries: %v", err)
+				log.Println("Metrics endpoint is still available, but data collection will fail")
+				return
+			}
+
+			log.Println("Authentication successful!")
+		} else {
+			log.Println("Authentication validation successful!")
+		}
+
+		// Start periodic metric collection only after successful authentication
+		log.Println("Starting periodic metric collection...")
+		exporter.StartPeriodicCollection(config.ScrapeInterval)
 	}()
 
 	// Wait for shutdown signal
