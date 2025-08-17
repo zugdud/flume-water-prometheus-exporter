@@ -494,7 +494,46 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 	}
 
 	// Use the direct flow rate endpoint
-	url := fmt.Sprintf("%s/users/me/devices/%s/query/active", c.baseURL, deviceID)
+	// First get the user ID from the /me endpoint
+	meURL := fmt.Sprintf("%s/me", c.baseURL)
+	meReq, err := http.NewRequest("GET", meURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create me request: %w", err)
+	}
+
+	meReq.Header.Set("Accept", "application/json")
+	meReq.Header.Set("Authorization", "Bearer "+c.accessToken)
+
+	meResp, err := c.httpClient.Do(meReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send me request: %w", err)
+	}
+	defer meResp.Body.Close()
+
+	if meResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(meResp.Body)
+		return nil, fmt.Errorf("me request failed with status %d: %s", meResp.StatusCode, string(body))
+	}
+
+	// Parse user ID from response
+	var meData struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			UserID int `json:"user_id"`
+		} `json:"data"`
+	}
+
+	meBody, _ := io.ReadAll(meResp.Body)
+	if err := json.Unmarshal(meBody, &meData); err != nil {
+		return nil, fmt.Errorf("failed to decode me response: %w", err)
+	}
+
+	if !meData.Success || len(meData.Data) == 0 {
+		return nil, fmt.Errorf("me response indicates failure or no data")
+	}
+
+	userID := meData.Data[0].UserID
+	url := fmt.Sprintf("%s/users/%d/devices/%s/query/active", c.baseURL, userID, deviceID)
 	log.Printf("GetCurrentFlowRate: Querying URL: %s", url)
 
 	req, err := http.NewRequest("GET", url, nil)
