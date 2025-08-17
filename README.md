@@ -503,7 +503,7 @@ This exporter uses the [Flume Personal API](https://flumetech.readme.io/referenc
 **Flow Rate Issues:**
 - The exporter now uses the direct flow rate endpoint `/users/{user_id}/devices/{device_id}/query/active`
 - This provides real-time flow rate data directly from the Flume API
-- The exporter automatically fetches the user ID from the `/me` endpoint first
+- The exporter automatically fetches the user ID from the `/me` endpoint first (which returns the user ID in the `id` field)
 - No more complex calculations from water usage data
 
 **Rate Limiting Issues:**

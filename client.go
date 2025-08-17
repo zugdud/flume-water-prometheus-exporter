@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -516,23 +519,67 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 	}
 
 	// Parse user ID from response
-	var meData struct {
-		Success bool `json:"success"`
-		Data    []struct {
-			UserID int `json:"user_id"`
-		} `json:"data"`
-	}
-
 	meBody, _ := io.ReadAll(meResp.Body)
+	log.Printf("GetCurrentFlowRate: /me response body: %s", string(meBody))
+
+	// Try to parse as generic JSON first to see the structure
+	var meData map[string]interface{}
 	if err := json.Unmarshal(meBody, &meData); err != nil {
 		return nil, fmt.Errorf("failed to decode me response: %w", err)
 	}
 
-	if !meData.Success || len(meData.Data) == 0 {
-		return nil, fmt.Errorf("me response indicates failure or no data")
+	log.Printf("GetCurrentFlowRate: /me response structure: %+v", meData)
+
+	// Extract user ID from the response
+	var userID int
+	if data, ok := meData["data"].([]interface{}); ok && len(data) > 0 {
+		if firstItem, ok := data[0].(map[string]interface{}); ok {
+			// Try to get user ID from the 'id' field first (as shown in the /me response)
+			if userIDFloat, ok := firstItem["id"].(float64); ok {
+				userID = int(userIDFloat)
+				log.Printf("GetCurrentFlowRate: Found user ID in 'id' field: %d", userID)
+			} else if userIDInt, ok := firstItem["id"].(int); ok {
+				userID = userIDInt
+				log.Printf("GetCurrentFlowRate: Found user ID in 'id' field: %d", userID)
+			} else if userIDStr, ok := firstItem["id"].(string); ok {
+				// Try to parse string user ID
+				if parsed, err := fmt.Sscanf(userIDStr, "%d", &userID); err != nil || parsed != 1 {
+					return nil, fmt.Errorf("failed to parse id string '%s': %w", userIDStr, err)
+				}
+				log.Printf("GetCurrentFlowRate: Found user ID in 'id' field (string): %d", userID)
+			} else {
+				// Fallback: try to get from 'user_id' field
+				if userIDFloat, ok := firstItem["user_id"].(float64); ok {
+					userID = int(userIDFloat)
+					log.Printf("GetCurrentFlowRate: Found user ID in 'user_id' field: %d", userID)
+				} else if userIDInt, ok := firstItem["user_id"].(int); ok {
+					userID = userIDInt
+					log.Printf("GetCurrentFlowRate: Found user ID in 'user_id' field: %d", userID)
+				} else if userIDStr, ok := firstItem["user_id"].(string); ok {
+					// Try to parse string user ID
+					if parsed, err := fmt.Sscanf(userIDStr, "%d", &userID); err != nil || parsed != 1 {
+						return nil, fmt.Errorf("failed to parse user_id string '%s': %w", userIDStr, err)
+					}
+					log.Printf("GetCurrentFlowRate: Found user ID in 'user_id' field (string): %d", userID)
+				} else {
+					log.Printf("GetCurrentFlowRate: Neither 'id' nor 'user_id' field found in /me response")
+					// Final fallback: try to extract from JWT token
+					if userIDFromToken := c.extractUserIDFromToken(); userIDFromToken > 0 {
+						userID = userIDFromToken
+						log.Printf("GetCurrentFlowRate: Using user ID from JWT token: %d", userID)
+					} else {
+						return nil, fmt.Errorf("could not extract user ID from /me response or JWT token")
+					}
+				}
+			}
+		}
 	}
 
-	userID := meData.Data[0].UserID
+	if userID == 0 {
+		return nil, fmt.Errorf("invalid user ID (0) extracted from /me response")
+	}
+
+	log.Printf("GetCurrentFlowRate: Extracted user ID: %d", userID)
 	url := fmt.Sprintf("%s/users/%d/devices/%s/query/active", c.baseURL, userID, deviceID)
 	log.Printf("GetCurrentFlowRate: Querying URL: %s", url)
 
@@ -734,6 +781,47 @@ func (c *FlumeClient) GetAuthenticationStatus() map[string]interface{} {
 	}
 
 	return status
+}
+
+// extractUserIDFromToken extracts the user ID from the JWT access token
+func (c *FlumeClient) extractUserIDFromToken() int {
+	if c.accessToken == "" {
+		return 0
+	}
+
+	// JWT tokens have 3 parts separated by dots
+	parts := strings.Split(c.accessToken, ".")
+	if len(parts) != 3 {
+		return 0
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return 0
+	}
+
+	// Parse the JSON payload
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return 0
+	}
+
+	// Extract user_id from claims
+	if userID, ok := claims["user_id"]; ok {
+		switch v := userID.(type) {
+		case float64:
+			return int(v)
+		case int:
+			return v
+		case string:
+			if parsed, err := strconv.Atoi(v); err == nil {
+				return parsed
+			}
+		}
+	}
+
+	return 0
 }
 
 // min returns the minimum of two integers
