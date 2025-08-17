@@ -500,10 +500,10 @@ This exporter uses the [Flume Personal API](https://flumetech.readme.io/referenc
 - Reduce scrape interval if needed
 - Monitor the number of devices and metrics
 
-**Flow Rate Errors (404):**
-- The exporter now calculates flow rate from recent water usage data
-- This resolves the previous 404 error from the non-existent `/current_interval` endpoint
-- Flow rate is calculated using the last 5 minutes of minute-level data
+**Flow Rate Issues:**
+- The exporter now uses the direct flow rate endpoint `/users/{user_id}/devices/{device_id}/query/active`
+- This provides real-time flow rate data directly from the Flume API
+- No more complex calculations from water usage data
 
 **Rate Limiting Issues:**
 - If you see "429 Too Many Requests" errors, increase your `API_MIN_INTERVAL`
