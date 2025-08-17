@@ -178,12 +178,18 @@ type Query struct {
 
 // QueryResponse represents the response from a query
 type QueryResponse struct {
-	Count int `json:"count"`
-	Data  []struct {
-		QueryData [][]interface{} `json:"query_data"`
-		RequestID string          `json:"request_id"`
-		Bucket    string          `json:"bucket"`
+	Success bool   `json:"success"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    []struct {
+		WaterUsage []struct {
+			DateTime string  `json:"datetime"`
+			Value    float64 `json:"value"`
+		} `json:"water_usage"`
+		RequestID string `json:"request_id"`
+		Bucket    string `json:"bucket"`
 	} `json:"data"`
+	Count int `json:"count"`
 }
 
 // DailyTotalWaterUsageResponse represents the response from a daily total water usage query
@@ -192,11 +198,11 @@ type DailyTotalWaterUsageResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    []struct {
-		RequestID string `json:"request_id"`
-		Data      map[string][]struct {
+		DailyTotalWaterUsage []struct {
 			DateTime string  `json:"datetime"`
 			Value    float64 `json:"value"`
-		} `json:"-"`
+		} `json:"daily_total_water_usage"`
+		RequestID string `json:"request_id"`
 	} `json:"data"`
 	Count int `json:"count"`
 }
@@ -798,11 +804,16 @@ func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time
 		return nil, fmt.Errorf("failed to decode query response: %w", err)
 	}
 
+	// Set the bucket field manually since the API response doesn't include it
+	if len(queryResp.Data) > 0 {
+		queryResp.Data[0].Bucket = bucket
+	}
+
 	log.Printf("QueryWaterUsage: Parsed response - Count: %d, Data entries: %d",
 		queryResp.Count, len(queryResp.Data))
 
-	if len(queryResp.Data) > 0 && len(queryResp.Data[0].QueryData) > 0 {
-		log.Printf("QueryWaterUsage: First data point: %+v", queryResp.Data[0].QueryData[0])
+	if len(queryResp.Data) > 0 && len(queryResp.Data[0].WaterUsage) > 0 {
+		log.Printf("QueryWaterUsage: First data point: %+v", queryResp.Data[0].WaterUsage[0])
 	}
 
 	return &queryResp, nil

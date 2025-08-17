@@ -131,13 +131,8 @@ func (m *Metrics) UpdateWaterUsage(deviceID, deviceName, location string, queryR
 
 		// Calculate total usage for this time period
 		var totalUsage float64
-		for _, queryData := range data.QueryData {
-			if len(queryData) >= 2 {
-				// queryData[1] should contain the usage value
-				if usage, ok := queryData[1].(float64); ok {
-					totalUsage += usage
-				}
-			}
+		for _, waterUsage := range data.WaterUsage {
+			totalUsage += waterUsage.Value
 		}
 
 		// Update the appropriate metric based on bucket type
@@ -319,13 +314,10 @@ func (e *FlumeExporter) CollectMetrics() {
 
 			// Update daily total water usage metrics for each day
 			for _, data := range dailyTotalUsage.Data {
-				// Parse the request ID to get the data
-				if dailyData, ok := data.Data[data.RequestID]; ok {
-					for _, dayData := range dailyData {
-						// Extract date from datetime (format: "2025-08-01 00:00:00")
-						date := dayData.DateTime[:10] // Get just the date part
-						e.metrics.UpdateDailyTotalWaterUsage(device.ID, deviceName, device.Location.Name, date, dayData.Value)
-					}
+				for _, dayData := range data.DailyTotalWaterUsage {
+					// Extract date from datetime (format: "2025-08-01 00:00:00")
+					date := dayData.DateTime[:10] // Get just the date part
+					e.metrics.UpdateDailyTotalWaterUsage(device.ID, deviceName, device.Location.Name, date, dayData.Value)
 				}
 			}
 		}
