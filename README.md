@@ -222,9 +222,10 @@ The exporter provides the following metrics:
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
-| `flume_current_flow_rate_gallons_per_minute` | Gauge | Current water flow rate (calculated from recent usage data) | `device_id`, `device_name`, `location` |
+| `flume_current_flow_rate_gallons_per_minute` | Gauge | Current water flow rate (direct from API) | `device_id`, `device_name`, `location` |
 | `flume_hourly_water_usage_gallons` | Gauge | Water usage in the last hour | `device_id`, `device_name`, `location` |  
 | `flume_daily_water_usage_gallons` | Gauge | Water usage today | `device_id`, `device_name`, `location` |
+| `flume_daily_total_water_usage_gallons` | Gauge | Daily total water usage for each day over time period | `device_id`, `device_name`, `location`, `date` |
 | `flume_total_water_usage_gallons` | Gauge | Total usage for time period | `device_id`, `device_name`, `location`, `bucket` |
 
 ### Device Information
@@ -253,6 +254,11 @@ flume_current_flow_rate_gallons_per_minute
 **Daily Water Usage:**
 ```promql
 flume_daily_water_usage_gallons
+```
+
+**Daily Total Water Usage (30-day history):**
+```promql
+flume_daily_total_water_usage_gallons
 ```
 
 **Average Hourly Usage (24h):**

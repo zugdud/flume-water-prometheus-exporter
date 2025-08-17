@@ -92,6 +92,7 @@ func main() {
 <li><code>flume_current_flow_rate_gallons_per_minute</code> - Current water flow rate</li>
 <li><code>flume_hourly_water_usage_gallons</code> - Hourly water usage</li>
 <li><code>flume_daily_water_usage_gallons</code> - Daily water usage</li>
+<li><code>flume_daily_total_water_usage_gallons</code> - Daily total water usage for each day over time period</li>
 <li><code>flume_total_water_usage_gallons</code> - Total water usage for time periods</li>
 <li><code>flume_device_info</code> - Device information</li>
 <li><code>flume_exporter_scrape_duration_seconds</code> - Time spent scraping API</li>
@@ -123,7 +124,7 @@ func main() {
 	// Start authentication in background
 	go func() {
 		log.Println("Starting authentication in background...")
-		
+
 		// Validate authentication before starting
 		log.Println("Validating authentication...")
 		if err := client.ValidateAuthentication(); err != nil {

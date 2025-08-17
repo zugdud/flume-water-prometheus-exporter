@@ -186,6 +186,21 @@ type QueryResponse struct {
 	} `json:"data"`
 }
 
+// DailyTotalWaterUsageResponse represents the response from a daily total water usage query
+type DailyTotalWaterUsageResponse struct {
+	Success bool   `json:"success"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    []struct {
+		RequestID string `json:"request_id"`
+		Data      map[string][]struct {
+			DateTime string  `json:"datetime"`
+			Value    float64 `json:"value"`
+		} `json:"-"`
+	} `json:"data"`
+	Count int `json:"count"`
+}
+
 // FlowRateResponse represents the current flow rate response
 type FlowRateResponse struct {
 	Value float64 `json:"value"`
@@ -646,6 +661,75 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 		Value: flowRateData.GPM,
 		Units: "gallons_per_minute",
 	}, nil
+}
+
+// QueryDailyTotalWaterUsage queries daily total water usage data for a device over a date range
+func (c *FlumeClient) QueryDailyTotalWaterUsage(deviceID string, since time.Time, until time.Time) (*DailyTotalWaterUsageResponse, error) {
+	// Apply rate limiting
+	c.rateLimiter.Wait()
+
+	// Ensure we have a valid token before making the request
+	if err := c.ensureValidToken(); err != nil {
+		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
+	}
+
+	query := Query{
+		RequestID:     "daily_total_water_usage",
+		Bucket:        "DAY",
+		SinceDatetime: since.Format("2006-01-02 15:04:05"),
+		UntilDatetime: until.Format("2006-01-02 15:04:05"),
+	}
+
+	queryReq := QueryRequest{
+		Queries: []Query{query},
+	}
+
+	jsonData, err := json.Marshal(queryReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal query request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/me/devices/%s/query", c.baseURL, deviceID)
+	log.Printf("QueryDailyTotalWaterUsage: Querying URL: %s", url)
+	log.Printf("QueryDailyTotalWaterUsage: Request body: %s", string(jsonData))
+	log.Printf("QueryDailyTotalWaterUsage: Since: %v, Until: %v", since, until)
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create query request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.accessToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send query request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("query request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Read and log the response body for debugging
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("QueryDailyTotalWaterUsage: Response status: %d", resp.StatusCode)
+	log.Printf("QueryDailyTotalWaterUsage: Response body: %s", string(body))
+
+	// Create a new reader since we consumed the body
+	bodyReader := bytes.NewReader(body)
+
+	var dailyTotalResp DailyTotalWaterUsageResponse
+	if err := json.NewDecoder(bodyReader).Decode(&dailyTotalResp); err != nil {
+		return nil, fmt.Errorf("failed to decode query response: %w", err)
+	}
+
+	log.Printf("QueryDailyTotalWaterUsage: Parsed response - Count: %d, Data entries: %d",
+		dailyTotalResp.Count, len(dailyTotalResp.Data))
+
+	return &dailyTotalResp, nil
 }
 
 // QueryWaterUsage queries water usage data for a device
