@@ -103,7 +103,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_current_flow_rate_gallons_per_minute",
+          "expr": "flume_current_flow_rate_gallons_per_minute{device_id=~\"$device\"}",
           "refId": "A"
         }
       ],
@@ -191,7 +191,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_hourly_water_usage_gallons",
+          "expr": "flume_hourly_water_usage_gallons{device_id=~\"$device\"}",
           "refId": "A"
         }
       ],
@@ -279,7 +279,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_daily_water_usage_gallons",
+          "expr": "flume_daily_water_usage_gallons{device_id=~\"$device\"}",
           "refId": "A"
         }
       ],
@@ -367,7 +367,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_total_water_usage_gallons",
+          "expr": "flume_total_water_usage_gallons{device_id=~\"$device\"}",
           "refId": "A"
         }
       ],
@@ -743,7 +743,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_total_water_usage_gallons",
+          "expr": "flume_total_water_usage_gallons{device_id=~\"$device\"}",
           "refId": "A"
         }
       ],
@@ -1009,13 +1009,175 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "flume_daily_total_water_usage_gallons",
+          "expr": "flume_daily_total_water_usage_gallons{device_id=~\"$device\"}",
           "legendFormat": "{{device_name}} - {{location}} - {{date}}",
           "refId": "A"
         }
       ],
       "title": "Daily Total Water Usage (30-day history)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "vis": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 400
+              }
+            ]
+          },
+          "unit": "gal",
+          "displayName": "Daily Usage (gallons)"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "flume_daily_total_water_usage_gallons{device_id=~\"$device\"}",
+          "legendFormat": "{{device_id}} - {{date}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Daily Water Usage by Device (Bar Chart)",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 400
+              }
+            ]
+          },
+          "unit": "gal",
+          "displayName": "Today's Total Usage"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 74
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(flume_daily_total_water_usage_gallons{device_id=~\"$device\", date=\"$__timeFilter()\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Today's Total Water Usage",
+      "type": "stat"
     }
   ],
   "refresh": "30s",
@@ -1028,10 +1190,76 @@
     "prometheus"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(flume_daily_total_water_usage_gallons, device_id)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Device",
+        "multi": true,
+        "name": "device",
+        "options": [],
+        "query": {
+          "query": "label_values(flume_daily_total_water_usage_gallons, device_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "30d",
+          "value": "30d"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Date Range",
+        "multi": false,
+        "name": "date_range",
+        "options": [
+          {
+            "selected": false,
+            "text": "7d",
+            "value": "7d"
+          },
+          {
+            "selected": false,
+            "text": "14d",
+            "value": "14d"
+          },
+          {
+            "selected": true,
+            "text": "30d",
+            "value": "30d"
+          },
+          {
+            "selected": false,
+            "text": "90d",
+            "value": "90d"
+          }
+        ],
+        "query": "7d,14d,30d,90d",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-$date_range",
     "to": "now"
   },
   "timepicker": {},

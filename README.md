@@ -23,35 +23,118 @@ A Prometheus exporter for [Flume](https://flumewater.com/) water monitoring devi
 
 ## Installation
 
-### For Raspberry Pi (Recommended)
+### Building on Raspberry Pi 5 (Recommended)
 
-**Pre-compiled binaries are available for Raspberry Pi:**
+**Requirements:**
+- Raspberry Pi 5 running Raspberry Pi OS (64-bit)
+- Go 1.21+ installed
 
-1. **Raspberry Pi 5 / Pi 4 / Pi 400 / Pi Zero 2 W (64-bit):**
-   ```bash
-   wget https://github.com/flume-water-prometheus-exporter/releases/latest/download/flume-exporter-linux-arm64
-   chmod +x flume-exporter-linux-arm64
-   sudo mv flume-exporter-linux-arm64 /usr/local/bin/flume-exporter
-   ```
+**Step 1: Install Go on Raspberry Pi 5**
+```bash
+# Remove old Go version if present
+sudo rm -rf /usr/local/go
 
-2. **Raspberry Pi 3 / Pi 2 / Pi Zero (32-bit):**
-   ```bash
-   wget https://github.com/flume-water-prometheus-exporter/releases/latest/download/flume-exporter-linux-arm32
-   chmod +x flume-exporter-linux-arm32
-   sudo mv flume-exporter-linux-arm32 /usr/local/bin/flume-exporter
-   ```
+# Download and install Go 1.21+ for ARM64
+wget https://go.dev/dl/go1.21.6.linux-arm64.tar.gz
+sudo tar -C /usr/local -xzf go1.21.6.linux-arm64.tar.gz
 
-### From Source
+# Add to PATH (add to ~/.bashrc for permanent)
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify installation
+go version
+```
+
+**Step 2: Clone and Build**
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/flume-water-prometheus-exporter.git
+cd flume-water-prometheus-exporter
+
+# Build the exporter
+go mod tidy
+go build -o flume-exporter .
+
+# Make it executable
+chmod +x flume-exporter
+```
+
+**Step 3: Install as Systemd Service**
+```bash
+# Install binary to system path
+sudo cp flume-exporter /usr/local/bin/
+
+# Create configuration directory
+sudo mkdir -p /etc/flume-exporter
+
+# Create environment configuration file
+sudo nano /etc/flume-exporter/config.env
+```
+
+Add your Flume credentials to `/etc/flume-exporter/config.env`:
+```bash
+FLUME_CLIENT_ID=your_client_id
+FLUME_CLIENT_SECRET=your_client_secret
+FLUME_USERNAME=your_username
+FLUME_PASSWORD=your_password
+LISTEN_ADDRESS=:9193
+SCRAPE_INTERVAL=30s
+API_MIN_INTERVAL=30s
+```
+
+**Step 4: Set Permissions and Install Service**
+```bash
+# Set proper permissions
+sudo chown root:root /etc/flume-exporter/config.env
+sudo chmod 600 /etc/flume-exporter/config.env
+
+# Copy systemd service file
+sudo cp flume-exporter.service /etc/systemd/system/
+
+# Reload systemd and enable service
+sudo systemctl daemon-reload
+sudo systemctl enable flume-exporter
+sudo systemctl start flume-exporter
+```
+
+**Step 5: Verify Installation**
+```bash
+# Check service status
+sudo systemctl status flume-exporter
+
+# Test metrics endpoint
+curl http://localhost:9193/metrics
+
+# View logs
+sudo journalctl -u flume-exporter -f
+```
+
+### Alternative: Using the Build Script
+
+If you prefer an automated approach:
 
 ```bash
-git clone https://github.com/flume-water-prometheus-exporter.git
+# Make the build script executable
+chmod +x build-pi5.sh
+
+# Run the build script
+./build-pi5.sh
+
+# Follow the prompts to configure and install
+```
+
+### From Source (Other Platforms)
+
+```bash
+git clone https://github.com/yourusername/flume-water-prometheus-exporter.git
 cd flume-water-prometheus-exporter
 
 # For cross-compilation (from development machine)
 GOOS=linux GOARCH=arm64 go build -o flume-exporter-linux-arm64 .    # 64-bit Pi
 GOOS=linux GOARCH=arm GOARM=7 go build -o flume-exporter-linux-arm32 .  # 32-bit Pi
 
-# For building directly on Raspberry Pi 5 with Go 1.23+
+# For building directly on target platform
 go build -o flume-exporter .
 
 # Using Makefile for optimized builds
@@ -60,47 +143,10 @@ make build-linux-arm64  # General 64-bit ARM
 make build-all          # All platforms
 ```
 
-### Building on Raspberry Pi 5
-
-**Requirements:**
-- Raspberry Pi OS (64-bit) 
-- Go 1.23+ installed
-
-**Install Go 1.23 on Pi 5:**
-```bash
-# Remove old Go version if present
-sudo rm -rf /usr/local/go
-
-# Download and install Go 1.23 for ARM64
-wget https://go.dev/dl/go1.23.4.linux-arm64.tar.gz
-sudo tar -C /usr/local -xzf go1.23.4.linux-arm64.tar.gz
-
-# Add to PATH (add to ~/.bashrc for permanent)
-export PATH=$PATH:/usr/local/go/bin
-```
-
-**Build the exporter:**
-```bash
-git clone https://github.com/flume-water-prometheus-exporter.git
-cd flume-water-prometheus-exporter
-
-# Simple build script for Pi 5 (recommended)
-chmod +x build-pi5.sh
-./build-pi5.sh
-
-# Or manual build
-go mod tidy
-go build -o flume-exporter .
-
-# Or use Makefile targets
-make build-pi5          # Pi 5 optimized
-make build-linux-arm64  # Generic ARM64
-```
-
 ### Using Go Install
 
 ```bash
-go install github.com/flume-water-prometheus-exporter@latest
+go install github.com/yourusername/flume-water-prometheus-exporter@latest
 ```
 
 ## Configuration
@@ -114,7 +160,7 @@ export FLUME_CLIENT_ID="your_client_id"
 export FLUME_CLIENT_SECRET="your_client_secret"  
 export FLUME_USERNAME="your_username"
 export FLUME_PASSWORD="your_password"
-export LISTEN_ADDRESS=":8080"
+export LISTEN_ADDRESS=":9193"
 export METRICS_PATH="/metrics"
 ```
 
@@ -126,7 +172,7 @@ export METRICS_PATH="/metrics"
   -client-secret="your_client_secret" \
   -username="your_username" \
   -password="your_password" \
-  -listen-address=":8080" \
+  -listen-address=":9193" \
   -metrics-path="/metrics" \
   -scrape-interval="30s" \
   -timeout="10s"
@@ -140,7 +186,7 @@ export METRICS_PATH="/metrics"
 | `-client-secret` | `FLUME_CLIENT_SECRET` | *required* | Flume API client secret |
 | `-username` | `FLUME_USERNAME` | *required* | Flume account username |
 | `-password` | `FLUME_PASSWORD` | *required* | Flume account password |
-| `-listen-address` | `LISTEN_ADDRESS` | `:8080` | Address to listen on |
+| `-listen-address` | `LISTEN_ADDRESS` | `:9193` | Address to listen on |
 | `-metrics-path` | `METRICS_PATH` | `/metrics` | Path for metrics endpoint |
 | `-scrape-interval` | `SCRAPE_INTERVAL` | `30s` | How often to scrape Flume API |
 | `-timeout` | `TIMEOUT` | `10s` | HTTP request timeout |
@@ -149,54 +195,44 @@ export METRICS_PATH="/metrics"
 
 ## Usage
 
-### Quick Start (Raspberry Pi)
+### Quick Start (Raspberry Pi 5)
 
-1. **Transfer files to your Raspberry Pi:**
-   ```bash
-   # For Raspberry Pi 5 (optimized build)
-   scp flume-exporter-pi5-arm64 install-raspberry-pi.sh pi@your-pi-ip:~/
-   
-   # For other Pi models
-   scp flume-exporter-linux-arm64 install-raspberry-pi.sh pi@your-pi-ip:~/   # 64-bit
-   scp flume-exporter-linux-arm32 install-raspberry-pi.sh pi@your-pi-ip:~/   # 32-bit
-   
-   # Or build directly on Pi 5
-   scp build-pi5.sh install-raspberry-pi.sh *.go go.mod go.sum Makefile pi@your-pi-ip:~/
-   ```
+After building and installing as described above, the exporter will run automatically as a systemd service.
 
-2. **SSH to your Raspberry Pi and run the installer:**
-   ```bash
-   ssh pi@your-pi-ip
-   chmod +x install-raspberry-pi.sh
-   ./install-raspberry-pi.sh
-   ```
+**Verify it's working:**
+```bash
+# Check service status
+sudo systemctl status flume-exporter
 
-3. **The installer will:**
-   - Install the binary to `/usr/local/bin/flume-exporter`
-   - Create configuration at `/etc/flume-exporter/config.env`
-   - Install and start a systemd service
-   - Prompt you for your Flume API credentials
+# Test metrics endpoint
+curl http://localhost:9193/metrics
 
-### Manual Usage
+# View logs
+sudo journalctl -u flume-exporter -f
+```
 
-1. **Start the exporter:**
+**Add to Prometheus configuration:**
+```yaml
+scrape_configs:
+  - job_name: 'flume-water'
+    static_configs:
+      - targets: ['raspberry-pi-ip:9193']
+    scrape_interval: 30s
+```
+
+### Manual Usage (Development/Testing)
+
+1. **Start the exporter manually:**
    ```bash
    ./flume-exporter
    ```
 
 2. **Verify it's working:**
    ```bash
-   curl http://localhost:8080/metrics
+   curl http://localhost:9193/metrics
    ```
 
-3. **Add to Prometheus configuration:**
-   ```yaml
-   scrape_configs:
-     - job_name: 'flume-water'
-       static_configs:
-         - targets: ['raspberry-pi-ip:8080']
-       scrape_interval: 30s
-   ```
+3. **Stop with Ctrl+C when done testing**
 
 ### Systemd Service Management
 
@@ -212,7 +248,31 @@ sudo systemctl restart flume-exporter
 
 # Stop service
 sudo systemctl stop flume-exporter
+
+# Enable service (start on boot)
+sudo systemctl enable flume-exporter
+
+# Disable service (don't start on boot)
+sudo systemctl disable flume-exporter
 ```
+
+### Logging
+
+The exporter logs to stdout and can be viewed via systemd:
+```bash
+# View all logs
+sudo journalctl -u flume-exporter
+
+# Follow logs in real-time
+sudo journalctl -u flume-exporter -f
+
+# View logs from last hour
+sudo journalctl -u flume-exporter --since "1 hour ago"
+```
+
+### Health Check
+
+Visit `http://localhost:9193/` for exporter status and available metrics.
 
 ## Metrics
 
@@ -284,7 +344,7 @@ docker build -t flume-exporter .
 ```bash
 docker run -d \
   --name flume-exporter \
-  -p 8080:8080 \
+  -p 9193:9193 \
   -e FLUME_CLIENT_ID="your_client_id" \
   -e FLUME_CLIENT_SECRET="your_client_secret" \
   -e FLUME_USERNAME="your_username" \
@@ -300,7 +360,7 @@ services:
   flume-exporter:
     build: .
     ports:
-      - "8080:8080"
+      - "9193:9193"
     environment:
       - FLUME_CLIENT_ID=your_client_id
       - FLUME_CLIENT_SECRET=your_client_secret
@@ -308,148 +368,6 @@ services:
       - FLUME_PASSWORD=your_password
     restart: unless-stopped
 ```
-
-## Raspberry Pi Installation
-
-### Prerequisites
-
-- Raspberry Pi 5 running Raspberry Pi OS (or compatible Linux distribution)
-- Go 1.21+ installed (for building from source)
-- Git installed
-
-### Quick Installation (Recommended)
-
-Use the provided installation script for automatic setup:
-
-```bash
-# Make script executable and run
-chmod +x install-raspberry-pi.sh
-./install-raspberry-pi.sh
-```
-
-The script will:
-- Build the exporter for ARM64
-- Install it to `/usr/local/bin/`
-- Create configuration directory and files
-- Install and enable the systemd service
-- Start the service automatically
-
-### Building and Installing
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/yourusername/flume-water-prometheus-exporter.git
-   cd flume-water-prometheus-exporter
-   ```
-
-2. **Build for ARM64:**
-   ```bash
-   GOOS=linux GOARCH=arm64 go build -o flume-exporter
-   ```
-
-3. **Install the binary:**
-   ```bash
-   sudo cp flume-exporter /usr/local/bin/
-   sudo chmod +x /usr/local/bin/flume-exporter
-   ```
-
-4. **Create configuration directory:**
-   ```bash
-   sudo mkdir -p /etc/flume-exporter
-   ```
-
-5. **Create environment file:**
-   ```bash
-   sudo nano /etc/flume-exporter/config.env
-   ```
-   
-   Add your Flume credentials:
-   ```bash
-   FLUME_CLIENT_ID=your_client_id
-   FLUME_CLIENT_SECRET=your_client_secret
-   FLUME_USERNAME=your_username
-   FLUME_PASSWORD=your_password
-   LISTEN_ADDRESS=:9193
-   SCRAPE_INTERVAL=30s
-   API_MIN_INTERVAL=30s
-   ```
-
-6. **Set proper permissions:**
-   ```bash
-   sudo chown root:root /etc/flume-exporter/config.env
-   sudo chmod 600 /etc/flume-exporter/config.env
-   ```
-
-7. **Install systemd service:**
-   ```bash
-   sudo cp flume-exporter.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   ```
-
-8. **Enable and start the service:**
-   ```bash
-   sudo systemctl enable flume-exporter
-   sudo systemctl start flume-exporter
-   ```
-
-### Service Management
-
-**Check service status:**
-```bash
-sudo systemctl status flume-exporter
-```
-
-**View logs:**
-```bash
-sudo journalctl -u flume-exporter -f
-```
-
-**Restart service:**
-```bash
-sudo systemctl restart flume-exporter
-```
-
-**Stop service:**
-```bash
-sudo systemctl stop flume-exporter
-```
-
-**Disable service (remove from startup):**
-```bash
-sudo systemctl disable flume-exporter
-```
-
-### Verification
-
-1. **Check if service is running:**
-   ```bash
-   sudo systemctl is-active flume-exporter
-   ```
-
-2. **Test metrics endpoint:**
-   ```bash
-   curl http://localhost:9193/metrics
-   ```
-
-3. **Check service logs for any errors:**
-   ```bash
-   sudo journalctl -u flume-exporter --no-pager -l
-   ```
-
-### Troubleshooting
-
-**Service won't start:**
-- Check configuration file permissions: `ls -la /etc/flume-exporter/`
-- Verify environment file syntax: `sudo cat /etc/flume-exporter/config.env`
-- Check systemd logs: `sudo journalctl -u flume-exporter --no-pager -l`
-
-**Permission denied errors:**
-- Ensure binary is executable: `ls -la /usr/local/bin/flume-exporter`
-- Check service user permissions in `flume-exporter.service`
-
-**Port already in use:**
-- Change `LISTEN_ADDRESS` in config.env to use a different port
-- Check what's using the port: `sudo netstat -tlnp | grep :9193`
 
 ## Rate Limiting
 
@@ -474,6 +392,85 @@ export API_MIN_INTERVAL=20s
 
 **Note**: With the default 30-second scrape interval and 30-second API rate limit, the exporter will make approximately 3-4 API calls per device per scrape cycle. For most users with 1-2 devices, this keeps you well within the 120 requests/hour limit.
 
+## Troubleshooting
+
+### Common Issues
+
+**Service won't start:**
+```bash
+# Check service status
+sudo systemctl status flume-exporter
+
+# View detailed logs
+sudo journalctl -u flume-exporter --no-pager -l
+
+# Check configuration file permissions
+ls -la /etc/flume-exporter/
+```
+
+**Authentication Failed:**
+- Verify your credentials in `/etc/flume-exporter/config.env`
+- Check that your Flume account is fully activated
+- Ensure API access is enabled in the portal
+
+**No Metrics:**
+- Check that you have sensor devices (not just bridges)
+- Verify devices are online and reporting data
+- Check exporter logs for API errors
+
+**Port already in use:**
+```bash
+# Check what's using the port
+sudo netstat -tlnp | grep :9193
+
+# Change port in config.env if needed
+sudo nano /etc/flume-exporter/config.env
+```
+
+**Permission denied errors:**
+```bash
+# Ensure binary is executable
+ls -la /usr/local/bin/flume-exporter
+
+# Check service file permissions
+ls -la /etc/systemd/system/flume-exporter.service
+```
+
+### Service Management Commands
+
+```bash
+# Check service status
+sudo systemctl status flume-exporter
+
+# View real-time logs
+sudo journalctl -u flume-exporter -f
+
+# Restart service
+sudo systemctl restart flume-exporter
+
+# Reload configuration
+sudo systemctl daemon-reload
+sudo systemctl restart flume-exporter
+```
+
+### Logging
+
+The exporter logs to stdout and can be viewed via systemd:
+```bash
+# View all logs
+sudo journalctl -u flume-exporter
+
+# Follow logs in real-time
+sudo journalctl -u flume-exporter -f
+
+# View logs from last hour
+sudo journalctl -u flume-exporter --since "1 hour ago"
+```
+
+### Health Check
+
+Visit `http://localhost:9193/` for exporter status and available metrics.
+
 ## API Reference
 
 This exporter uses the [Flume Personal API](https://flumetech.readme.io/reference/introduction) which provides:
@@ -487,48 +484,6 @@ This exporter uses the [Flume Personal API](https://flumetech.readme.io/referenc
 
 - **Bridge Devices (type=1)**: Network gateways (metadata only)
 - **Sensor Devices (type=2)**: Water flow sensors (full metrics)
-
-## Troubleshooting
-
-### Common Issues
-
-**Authentication Failed:**
-- Verify your credentials are correct
-- Check that your account is fully activated
-- Ensure API access is enabled in the portal
-
-**No Metrics:**
-- Check that you have sensor devices (not just bridges)
-- Verify devices are online and reporting data
-- Check exporter logs for API errors
-
-**High Memory Usage:**
-- Reduce scrape interval if needed
-- Monitor the number of devices and metrics
-
-**Flow Rate Issues:**
-- The exporter now uses the direct flow rate endpoint `/users/{user_id}/devices/{device_id}/query/active`
-- This provides real-time flow rate data directly from the Flume API
-- The exporter automatically fetches the user ID from the `/me` endpoint first (which returns the user ID in the `id` field)
-- No more complex calculations from water usage data
-
-**Rate Limiting Issues:**
-- If you see "429 Too Many Requests" errors, increase your `API_MIN_INTERVAL`
-- The default 30-second interval ensures you stay within the 120 requests/hour limit
-- Monitor your API usage and adjust the rate limiting if needed
-
-### Logging
-
-The exporter logs to stdout. Increase verbosity by setting log level:
-
-```bash
-export LOG_LEVEL=debug
-./flume-exporter
-```
-
-### Health Check
-
-Visit `http://localhost:8080/` for exporter status and available metrics.
 
 ## Contributing
 
