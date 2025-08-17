@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -494,14 +495,15 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 		return nil, fmt.Errorf("failed to ensure valid token: %w", err)
 	}
 
-	// Get recent water usage data (last 5 minutes) to calculate current flow rate
+	// Get recent water usage data (last 15 minutes) to calculate current flow rate
+	// We need more data points to calculate a meaningful rate of change
 	now := time.Now()
-	fiveMinutesAgo := now.Add(-5 * time.Minute)
+	fifteenMinutesAgo := now.Add(-15 * time.Minute)
 
 	query := Query{
 		RequestID:     "flow_rate_calc",
 		Bucket:        "MIN", // Use minute-level data for more accurate flow rate
-		SinceDatetime: fiveMinutesAgo.Format("2006-01-02 15:04:05"),
+		SinceDatetime: fifteenMinutesAgo.Format("2006-01-02 15:04:05"),
 		UntilDatetime: now.Format("2006-01-02 15:04:05"),
 	}
 
@@ -515,6 +517,9 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 	}
 
 	url := fmt.Sprintf("%s/me/devices/%s/query", c.baseURL, deviceID)
+	log.Printf("GetCurrentFlowRate: Querying URL: %s", url)
+	log.Printf("GetCurrentFlowRate: Request body: %s", string(jsonData))
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create flow rate query request: %w", err)
@@ -534,49 +539,181 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 		return nil, fmt.Errorf("flow rate query request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Read and log the response body for debugging
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("GetCurrentFlowRate: Response status: %d", resp.StatusCode)
+	log.Printf("GetCurrentFlowRate: Response body: %s", string(body))
+
+	// Create a new reader since we consumed the body
+	bodyReader := bytes.NewReader(body)
+
 	var queryResp QueryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+	if err := json.NewDecoder(bodyReader).Decode(&queryResp); err != nil {
 		return nil, fmt.Errorf("failed to decode flow rate query response: %w", err)
 	}
 
-	// Calculate current flow rate from the most recent data
-	if len(queryResp.Data) == 0 || len(queryResp.Data[0].QueryData) == 0 {
-		// No recent data available, return 0 flow rate
-		return &FlowRateResponse{
-			Value: 0.0,
-			Units: "gallons_per_minute",
-		}, nil
-	}
+	log.Printf("GetCurrentFlowRate: Parsed response - Count: %d, Data entries: %d",
+		queryResp.Count, len(queryResp.Data))
 
-	// Get the most recent data point
-	latestData := queryResp.Data[0].QueryData[len(queryResp.Data[0].QueryData)-1]
-	if len(latestData) < 2 {
-		return &FlowRateResponse{
-			Value: 0.0,
-			Units: "gallons_per_minute",
-		}, nil
-	}
-
-	// Extract the water usage value (assuming it's the second element)
-	// The structure might be [timestamp, value, ...]
-	var usage float64
-	switch v := latestData[1].(type) {
-	case float64:
-		usage = v
-	case int:
-		usage = float64(v)
-	case string:
-		// Try to parse string to float
-		if parsed, err := fmt.Sscanf(v, "%f", &usage); err != nil || parsed != 1 {
-			usage = 0.0
+	// Log the raw response structure for debugging
+	if len(queryResp.Data) > 0 {
+		log.Printf("GetCurrentFlowRate: First data entry structure: %+v", queryResp.Data[0])
+		if len(queryResp.Data[0].QueryData) > 0 {
+			log.Printf("GetCurrentFlowRate: First query data entry: %+v", queryResp.Data[0].QueryData[0])
 		}
-	default:
-		usage = 0.0
 	}
 
-	// Convert usage to flow rate (gallons per minute)
-	// Since we're using MIN bucket, the value should already be per minute
-	flowRate := usage
+	// Calculate current flow rate from the data
+	if len(queryResp.Data) == 0 {
+		log.Printf("GetCurrentFlowRate: No data entries in response")
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	if len(queryResp.Data[0].QueryData) == 0 {
+		log.Printf("GetCurrentFlowRate: No query data in first data entry")
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	queryData := queryResp.Data[0].QueryData
+	log.Printf("GetCurrentFlowRate: Query data entries: %d", len(queryData))
+
+	// We need at least 2 data points to calculate a rate of change
+	if len(queryData) < 2 {
+		log.Printf("GetCurrentFlowRate: Insufficient data points for flow rate calculation (need 2, got %d)", len(queryData))
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	// Parse the data points to extract timestamps and usage values
+	type DataPoint struct {
+		Timestamp time.Time
+		Usage     float64
+	}
+
+	var dataPoints []DataPoint
+	for _, data := range queryData {
+		if len(data) < 2 {
+			log.Printf("GetCurrentFlowRate: Skipping data point with insufficient elements: %+v", data)
+			continue
+		}
+
+		// Parse timestamp (first element)
+		var timestamp time.Time
+		switch v := data[0].(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				timestamp = t
+			} else {
+				log.Printf("GetCurrentFlowRate: Failed to parse timestamp '%s': %v", v, err)
+				continue
+			}
+		default:
+			log.Printf("GetCurrentFlowRate: Unknown timestamp type: %T, value: %v", v, v)
+			continue
+		}
+
+		// Parse usage value (second element)
+		var usage float64
+		switch v := data[1].(type) {
+		case float64:
+			usage = v
+		case int:
+			usage = float64(v)
+		case string:
+			if _, err := fmt.Sscanf(v, "%f", &usage); err != nil {
+				log.Printf("GetCurrentFlowRate: Failed to parse usage string '%s': %v", v, err)
+				continue
+			}
+		default:
+			log.Printf("GetCurrentFlowRate: Unknown usage type: %T, value: %v", v, v)
+			continue
+		}
+
+		dataPoints = append(dataPoints, DataPoint{Timestamp: timestamp, Usage: usage})
+		log.Printf("GetCurrentFlowRate: Parsed data point - Time: %v, Usage: %f", timestamp, usage)
+	}
+
+	if len(dataPoints) < 2 {
+		log.Printf("GetCurrentFlowRate: Insufficient valid data points for flow rate calculation (need 2, got %d)", len(dataPoints))
+		return &FlowRateResponse{
+			Value: 0.0,
+			Units: "gallons_per_minute",
+		}, nil
+	}
+
+	// Sort data points by timestamp to ensure chronological order
+	sort.Slice(dataPoints, func(i, j int) bool {
+		return dataPoints[i].Timestamp.Before(dataPoints[j].Timestamp)
+	})
+
+	// Calculate flow rate using the most recent data points
+	// Use the last 3 data points if available for a more stable calculation
+	startIdx := 0
+	if len(dataPoints) >= 3 {
+		startIdx = len(dataPoints) - 3
+	}
+
+	recentPoints := dataPoints[startIdx:]
+	log.Printf("GetCurrentFlowRate: Using %d recent data points for flow rate calculation", len(recentPoints))
+
+	// Calculate the rate of change (flow rate) using linear regression
+	// This gives us a more stable flow rate estimate
+	var sumX, sumY, sumXY, sumX2 float64
+	var n = float64(len(recentPoints))
+
+	for _, point := range recentPoints {
+		// Convert timestamp to minutes since the first point for numerical stability
+		minutesSinceStart := point.Timestamp.Sub(recentPoints[0].Timestamp).Minutes()
+		x := minutesSinceStart
+		y := point.Usage
+
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumX2 += x * x
+	}
+
+	// Calculate slope (flow rate in gallons per minute)
+	var flowRate float64
+	if n > 1 && (n*sumX2-sumX*sumX) != 0 {
+		flowRate = (n*sumXY - sumX*sumY) / (n*sumX2 - sumX*sumX)
+		log.Printf("GetCurrentFlowRate: Calculated flow rate using linear regression: %f gallons per minute", flowRate)
+	} else {
+		// Fallback to simple rate calculation between last two points
+		if len(recentPoints) >= 2 {
+			last := recentPoints[len(recentPoints)-1]
+			secondLast := recentPoints[len(recentPoints)-2]
+			timeDiff := last.Timestamp.Sub(secondLast.Timestamp).Minutes()
+			usageDiff := last.Usage - secondLast.Usage
+
+			if timeDiff > 0 {
+				flowRate = usageDiff / timeDiff
+				log.Printf("GetCurrentFlowRate: Calculated flow rate using simple rate: %f gallons per minute", flowRate)
+			} else {
+				log.Printf("GetCurrentFlowRate: Time difference is zero, cannot calculate flow rate")
+				flowRate = 0.0
+			}
+		} else {
+			log.Printf("GetCurrentFlowRate: Cannot calculate flow rate with available data")
+			flowRate = 0.0
+		}
+	}
+
+	// Ensure flow rate is non-negative (water usage should only increase)
+	if flowRate < 0 {
+		log.Printf("GetCurrentFlowRate: Negative flow rate detected (%f), setting to 0", flowRate)
+		flowRate = 0.0
+	}
+
+	log.Printf("GetCurrentFlowRate: Final flow rate: %f gallons per minute", flowRate)
 
 	return &FlowRateResponse{
 		Value: flowRate,
@@ -614,6 +751,10 @@ func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time
 	}
 
 	url := fmt.Sprintf("%s/me/devices/%s/query", c.baseURL, deviceID)
+	log.Printf("QueryWaterUsage: Querying URL: %s", url)
+	log.Printf("QueryWaterUsage: Request body: %s", string(jsonData))
+	log.Printf("QueryWaterUsage: Bucket: %s, Since: %v, Until: %v", bucket, since, until)
+
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create query request: %w", err)
@@ -633,9 +774,24 @@ func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time
 		return nil, fmt.Errorf("query request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Read and log the response body for debugging
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("QueryWaterUsage: Response status: %d", resp.StatusCode)
+	log.Printf("QueryWaterUsage: Response body: %s", string(body))
+
+	// Create a new reader since we consumed the body
+	bodyReader := bytes.NewReader(body)
+
 	var queryResp QueryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+	if err := json.NewDecoder(bodyReader).Decode(&queryResp); err != nil {
 		return nil, fmt.Errorf("failed to decode query response: %w", err)
+	}
+
+	log.Printf("QueryWaterUsage: Parsed response - Count: %d, Data entries: %d",
+		queryResp.Count, len(queryResp.Data))
+
+	if len(queryResp.Data) > 0 && len(queryResp.Data[0].QueryData) > 0 {
+		log.Printf("QueryWaterUsage: First data point: %+v", queryResp.Data[0].QueryData[0])
 	}
 
 	return &queryResp, nil

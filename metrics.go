@@ -144,7 +144,7 @@ func (m *Metrics) UpdateWaterUsage(deviceID, deviceName, location string, queryR
 }
 
 // UpdateDeviceInfo updates device information metric
-func (m *Metrics) UpdateDeviceInfo(device Device) {
+func (m *Metrics) UpdateDeviceInfo(device Device, deviceName string) {
 	deviceType := "unknown"
 	switch device.Type {
 	case 1:
@@ -155,7 +155,7 @@ func (m *Metrics) UpdateDeviceInfo(device Device) {
 
 	m.deviceInfo.WithLabelValues(
 		device.ID,
-		device.Location.Name,
+		deviceName,
 		device.Location.Name,
 		deviceType,
 	).Set(1)
@@ -207,10 +207,15 @@ func (e *FlumeExporter) CollectMetrics() {
 
 	// Process each device
 	for _, device := range devices {
-		log.Printf("Processing device %s (%s)", device.ID, device.Location.Name)
+		log.Printf("Processing device %s - Type: %d, Location: '%s'", device.ID, device.Type, device.Location.Name)
 
 		// Update device info
-		e.metrics.UpdateDeviceInfo(device)
+		// Use device ID as device name if location name is empty, otherwise use location name
+		deviceName := device.Location.Name
+		if deviceName == "" {
+			deviceName = device.ID
+		}
+		e.metrics.UpdateDeviceInfo(device, deviceName)
 
 		// Skip bridge devices (type 1) as they don't have sensor data
 		if device.Type == 1 {
@@ -228,7 +233,12 @@ func (e *FlumeExporter) CollectMetrics() {
 			e.metrics.RecordScrapeMetrics("flow_rate", duration, false)
 		} else {
 			e.metrics.RecordScrapeMetrics("flow_rate", duration, true)
-			e.metrics.UpdateCurrentFlowRate(device.ID, device.Location.Name, device.Location.Name, flowRate.Value)
+			// Use device ID as device name if location name is empty, otherwise use location name
+			deviceName := device.Location.Name
+			if deviceName == "" {
+				deviceName = device.ID
+			}
+			e.metrics.UpdateCurrentFlowRate(device.ID, deviceName, device.Location.Name, flowRate.Value)
 			log.Printf("Flow rate for device %s: %.2f %s", device.ID, flowRate.Value, flowRate.Units)
 		}
 
@@ -245,7 +255,12 @@ func (e *FlumeExporter) CollectMetrics() {
 			e.metrics.RecordScrapeMetrics("hourly_usage", duration, false)
 		} else {
 			e.metrics.RecordScrapeMetrics("hourly_usage", duration, true)
-			e.metrics.UpdateWaterUsage(device.ID, device.Location.Name, device.Location.Name, hourlyUsage)
+			// Use device ID as device name if location name is empty, otherwise use location name
+			deviceName := device.Location.Name
+			if deviceName == "" {
+				deviceName = device.ID
+			}
+			e.metrics.UpdateWaterUsage(device.ID, deviceName, device.Location.Name, hourlyUsage)
 		}
 
 		// Get daily usage for today
@@ -260,7 +275,12 @@ func (e *FlumeExporter) CollectMetrics() {
 			e.metrics.RecordScrapeMetrics("daily_usage", duration, false)
 		} else {
 			e.metrics.RecordScrapeMetrics("daily_usage", duration, true)
-			e.metrics.UpdateWaterUsage(device.ID, device.Location.Name, device.Location.Name, dailyUsage)
+			// Use device ID as device name if location name is empty, otherwise use location name
+			deviceName := device.Location.Name
+			if deviceName == "" {
+				deviceName = device.ID
+			}
+			e.metrics.UpdateWaterUsage(device.ID, deviceName, device.Location.Name, dailyUsage)
 		}
 	}
 
