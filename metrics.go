@@ -191,10 +191,10 @@ type FlumeExporter struct {
 }
 
 // NewFlumeExporter creates a new Flume exporter
-func NewFlumeExporter(client *FlumeClient, config *Config) *FlumeExporter {
+func NewFlumeExporter(client *FlumeClient, config *Config, metrics *Metrics) *FlumeExporter {
 	return &FlumeExporter{
 		client:  client,
-		metrics: NewMetrics(),
+		metrics: metrics,
 		config:  config,
 	}
 }

@@ -38,8 +38,7 @@ func main() {
 
 	// Create metrics and exporter
 	metrics := NewMetrics()
-	exporter := NewFlumeExporter(nil, config) // Will set client later
-	exporter.metrics = metrics
+	exporter := NewFlumeExporter(nil, config, metrics) // Pass metrics parameter
 
 	// Create Flume client
 	client := NewFlumeClient(config, metrics)
