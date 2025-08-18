@@ -44,14 +44,9 @@ type TokenData struct {
 
 // NewFlumeClient creates a new Flume API client
 func NewFlumeClient(config *Config, metrics *Metrics) *FlumeClient {
-	// Create token file path in a system-appropriate directory
-	tokenFile := "/var/lib/flume-exporter/tokens.json"
-
-	// Ensure the directory exists
-	if err := os.MkdirAll("/var/lib/flume-exporter", 0755); err != nil {
-		log.Printf("Warning: Could not create token directory, using current directory: %v", err)
-		tokenFile = "./flume_exporter_tokens.json"
-	}
+	// Always use /tmp for token storage - it's guaranteed to be writable
+	tokenFile := "/tmp/flume_exporter_tokens.json"
+	log.Printf("Using token file: %s", tokenFile)
 
 	client := &FlumeClient{
 		baseURL: config.BaseURL,
