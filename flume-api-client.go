@@ -44,13 +44,14 @@ type TokenData struct {
 
 // NewFlumeClient creates a new Flume API client
 func NewFlumeClient(config *Config, metrics *Metrics) *FlumeClient {
-	// Create token file path in user's home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("Warning: Could not determine home directory, using current directory: %v", err)
-		homeDir = "."
+	// Create token file path in a system-appropriate directory
+	tokenFile := "/var/lib/flume-exporter/tokens.json"
+
+	// Ensure the directory exists
+	if err := os.MkdirAll("/var/lib/flume-exporter", 0755); err != nil {
+		log.Printf("Warning: Could not create token directory, using current directory: %v", err)
+		tokenFile = "./flume_exporter_tokens.json"
 	}
-	tokenFile := filepath.Join(homeDir, ".flume_exporter_tokens.json")
 
 	client := &FlumeClient{
 		baseURL: config.BaseURL,
