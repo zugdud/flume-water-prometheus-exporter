@@ -111,6 +111,13 @@ func NewMetrics() *Metrics {
 		m.rateLimitErrors,
 	)
 
+	// Initialize rate limit error metric to 0 for common endpoints
+	// This ensures the metric is visible in Prometheus even before any errors occur
+	commonEndpoints := []string{"devices", "flow_rate", "daily_total_water_usage", "water_usage"}
+	for _, endpoint := range commonEndpoints {
+		m.rateLimitErrors.WithLabelValues(endpoint).Add(0)
+	}
+
 	return m
 }
 
