@@ -11,6 +11,7 @@ A Prometheus exporter for [Flume](https://flumewater.com/) water monitoring devi
 - ⚡ Configurable scrape intervals
 - 📈 Rich Prometheus metrics with device metadata
 - 🛠️ Built-in health and performance monitoring
+- 🎯 Optional device filtering by device ID
 
 ## Prerequisites
 
@@ -93,6 +94,10 @@ export FLUME_USERNAME="your_username"
 export FLUME_PASSWORD="your_password"
 export LISTEN_ADDRESS=":9193"
 export METRICS_PATH="/metrics"
+
+# Optional: Filter specific devices (comma-separated)
+# If not specified, data from all devices will be collected
+export DEVICE_IDS="6899913485570306485,6906448283393854879"
 ```
 
 ### Command Line Flags
@@ -106,7 +111,8 @@ export METRICS_PATH="/metrics"
   -listen-address=":9193" \
   -metrics-path="/metrics" \
   -scrape-interval="30s" \
-  -timeout="10s"
+  -timeout="10s" \
+  -device-ids="6899913485570306485,6906448283393854879"
 ```
 
 ### Configuration Options
@@ -123,6 +129,52 @@ export METRICS_PATH="/metrics"
 | `-timeout` | `TIMEOUT` | `10s` | HTTP request timeout |
 | `-base-url` | `BASE_URL` | `https://api.flumewater.com` | Flume API base URL |
 | `-api-min-interval` | `API_MIN_INTERVAL` | `30s` | Minimum interval between Flume API requests (120 requests/hour limit) |
+| `-device-ids` | `DEVICE_IDS` | *none* | Comma-separated list of device IDs to collect data from (if not specified, all devices are collected) |
+
+## Device Filtering
+
+The exporter supports filtering which devices to collect data from using the `DEVICE_IDS` configuration option.
+
+### How It Works
+
+- **No Filter**: If `DEVICE_IDS` is not specified, the exporter will collect data from all devices in your Flume account
+- **With Filter**: If `DEVICE_IDS` is specified, only the listed devices will be processed
+
+### Configuration Examples
+
+**Environment Variable:**
+```bash
+# Filter to specific devices
+export DEVICE_IDS="6899913485570306485,6906448283393854879"
+
+# Or in config.env file
+DEVICE_IDS=6899913485570306485,6906448283393854879
+```
+
+**Command Line:**
+```bash
+./flume-exporter -device-ids="6899913485570306485,6906448283393854879"
+```
+
+**Systemd Service:**
+```ini
+# In /opt/flume-exporter/config.env
+DEVICE_IDS=6899913485570306485,6906448283393854879
+```
+
+### Benefits
+
+- **Reduced API Calls**: Only query specified devices, reducing API usage
+- **Focused Monitoring**: Collect metrics only from devices you care about
+- **Performance**: Faster metric collection when you have many devices
+- **Cost Control**: Stay within Flume API rate limits more easily
+
+### Finding Your Device IDs
+
+You can find your device IDs in several ways:
+1. **Flume App**: Device settings show the device ID
+2. **API Response**: The exporter logs show device IDs during startup
+3. **Metrics**: Check the `device_id` label in your Prometheus metrics
 
 ## Usage
 
@@ -213,7 +265,11 @@ If you want to run the exporter as a background service that starts automaticall
    LISTEN_ADDRESS=:9193
    SCRAPE_INTERVAL=30s
    API_MIN_INTERVAL=30s
-   ```
+
+# Optional: Filter specific devices (comma-separated)
+# If not specified, data from all devices will be collected
+DEVICE_IDS=6899913485570306485,6906448283393854879
+```
 
 5. **Set permissions and enable service:**
    ```bash
@@ -251,6 +307,10 @@ export FLUME_USERNAME="your_username"
 export FLUME_PASSWORD="your_password"
 export LISTEN_ADDRESS=":9193"
 export METRICS_PATH="/metrics"
+
+# Optional: Filter specific devices (comma-separated)
+# If not specified, data from all devices will be collected
+export DEVICE_IDS="6899913485570306485,6906448283393854879"
 ```
 
 ## Metrics

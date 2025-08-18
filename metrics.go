@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -187,14 +188,33 @@ func (m *Metrics) RecordScrapeMetrics(endpoint string, duration time.Duration, s
 type FlumeExporter struct {
 	client  *FlumeClient
 	metrics *Metrics
+	config  *Config
 }
 
 // NewFlumeExporter creates a new Flume exporter
-func NewFlumeExporter(client *FlumeClient) *FlumeExporter {
+func NewFlumeExporter(client *FlumeClient, config *Config) *FlumeExporter {
 	return &FlumeExporter{
 		client:  client,
 		metrics: NewMetrics(),
+		config:  config,
 	}
+}
+
+// shouldProcessDevice checks if a device should be processed based on DeviceIDs configuration
+func (e *FlumeExporter) shouldProcessDevice(deviceID string) bool {
+	// If no DeviceIDs specified, process all devices
+	if e.config.DeviceIDs == "" {
+		return true
+	}
+
+	// Parse comma-separated device IDs
+	deviceIDs := strings.Split(e.config.DeviceIDs, ",")
+	for _, id := range deviceIDs {
+		if strings.TrimSpace(id) == deviceID {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectMetrics collects all metrics from the Flume API
@@ -215,9 +235,26 @@ func (e *FlumeExporter) CollectMetrics() {
 	e.metrics.RecordScrapeMetrics("devices", duration, true)
 	log.Printf("Found %d devices", len(devices))
 
+	// Count devices that will be processed
+	processedCount := 0
+	if e.config.DeviceIDs != "" {
+		for _, device := range devices {
+			if e.shouldProcessDevice(device.ID) {
+				processedCount++
+			}
+		}
+		log.Printf("Device filtering active: %d of %d devices will be processed", processedCount, len(devices))
+	}
+
 	// Process each device
 	for _, device := range devices {
 		log.Printf("Processing device %s - Type: %d, Location: '%s'", device.ID, device.Type, device.Location.Name)
+
+		// Check if this device should be processed based on DeviceIDs configuration
+		if !e.shouldProcessDevice(device.ID) {
+			log.Printf("Skipping device %s (not in DeviceIDs filter)", device.ID)
+			continue
+		}
 
 		// Update device info
 		// Use device ID as device name if location name is empty, otherwise use location name

@@ -30,6 +30,9 @@ type Config struct {
 
 	// API rate limiting
 	APIMinInterval time.Duration
+
+	// Device filtering
+	DeviceIDs string
 }
 
 // NewConfig creates a new configuration with default values
@@ -59,6 +62,7 @@ func LoadConfig() (*Config, error) {
 	flag.DurationVar(&config.Timeout, "timeout", config.Timeout, "Request timeout")
 	flag.StringVar(&config.BaseURL, "base-url", config.BaseURL, "Flume API base URL")
 	flag.DurationVar(&config.APIMinInterval, "api-min-interval", config.APIMinInterval, "Minimum interval between Flume API requests")
+	flag.StringVar(&config.DeviceIDs, "device-ids", "", "Comma-separated list of device IDs to scrape (e.g., 123,456,789)")
 
 	// Add flag to clear tokens
 	clearTokens := flag.Bool("clear-tokens", false, "Clear stored authentication tokens")
@@ -127,6 +131,9 @@ func LoadConfig() (*Config, error) {
 		} else {
 			log.Printf("Warning: Invalid API_MIN_INTERVAL value '%s', using default: %v", val, config.APIMinInterval)
 		}
+	}
+	if val := os.Getenv("DEVICE_IDS"); val != "" {
+		config.DeviceIDs = val
 	}
 
 	// Validate required configuration with helpful error messages
