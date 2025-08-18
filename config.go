@@ -156,3 +156,40 @@ func LoadConfig() (*Config, error) {
 
 	return config, nil
 }
+
+// calculateOptimalScrapeInterval determines the optimal scrape interval based on device count
+// to stay under Flume's 120 requests/hour limit
+func (c *Config) calculateOptimalScrapeInterval(deviceCount int) time.Duration {
+	// Base requests per scrape: 1 (get devices) + deviceCount (flow rate) + deviceCount (daily total when scheduled)
+	// Daily total is collected ~2x per day, so average per scrape is minimal
+	baseRequestsPerScrape := 1 + deviceCount
+
+	// Target: stay under 120 requests/hour
+	// Formula: interval = 3600 seconds / (120 / baseRequestsPerScrape)
+	// Simplified: interval = 30 * baseRequestsPerScrape seconds
+	optimalIntervalSeconds := 30 * baseRequestsPerScrape
+
+	// Convert to time.Duration
+	optimalInterval := time.Duration(optimalIntervalSeconds) * time.Second
+
+	// Ensure minimum interval of 2 minutes and maximum of 10 minutes
+	// 2 minutes provides safer margin below rate limit for all device counts
+	if optimalInterval < 2*time.Minute {
+		optimalInterval = 2 * time.Minute
+	} else if optimalInterval > 10*time.Minute {
+		optimalInterval = 10 * time.Minute
+	}
+
+	return optimalInterval
+}
+
+// GetScrapeInterval returns the optimal scrape interval based on device count
+func (c *Config) GetScrapeInterval(deviceCount int) time.Duration {
+	// If user specified a custom interval, use that
+	if c.ScrapeInterval != 30*time.Second {
+		return c.ScrapeInterval
+	}
+
+	// Otherwise, calculate optimal interval
+	return c.calculateOptimalScrapeInterval(deviceCount)
+}

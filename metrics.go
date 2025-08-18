@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -15,8 +17,6 @@ type Metrics struct {
 
 	// Water usage metrics
 	totalWaterUsage      *prometheus.GaugeVec
-	hourlyWaterUsage     *prometheus.GaugeVec
-	dailyWaterUsage      *prometheus.GaugeVec
 	dailyTotalWaterUsage *prometheus.GaugeVec
 
 	// Device info metrics
@@ -45,22 +45,6 @@ func NewMetrics() *Metrics {
 				Help: "Total water usage in gallons for a specific time period",
 			},
 			[]string{"device_id", "device_name", "location", "bucket"},
-		),
-
-		hourlyWaterUsage: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Name: "flume_hourly_water_usage_gallons",
-				Help: "Hourly water usage in gallons",
-			},
-			[]string{"device_id", "device_name", "location"},
-		),
-
-		dailyWaterUsage: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{
-				Name: "flume_daily_water_usage_gallons",
-				Help: "Daily water usage in gallons",
-			},
-			[]string{"device_id", "device_name", "location"},
 		),
 
 		dailyTotalWaterUsage: prometheus.NewGaugeVec(
@@ -108,8 +92,6 @@ func NewMetrics() *Metrics {
 	prometheus.MustRegister(
 		m.currentFlowRate,
 		m.totalWaterUsage,
-		m.hourlyWaterUsage,
-		m.dailyWaterUsage,
 		m.dailyTotalWaterUsage,
 		m.deviceInfo,
 		m.scrapeDuration,
@@ -139,13 +121,10 @@ func (m *Metrics) UpdateWaterUsage(deviceID, deviceName, location string, queryR
 		// Update the appropriate metric based on bucket type
 		switch bucket {
 		case "HR":
-			m.hourlyWaterUsage.WithLabelValues(deviceID, deviceName, location).Set(totalUsage)
+			m.totalWaterUsage.WithLabelValues(deviceID, deviceName, location, bucket).Set(totalUsage)
 		case "DAY":
-			m.dailyWaterUsage.WithLabelValues(deviceID, deviceName, location).Set(totalUsage)
+			m.totalWaterUsage.WithLabelValues(deviceID, deviceName, location, bucket).Set(totalUsage)
 		}
-
-		// Always update the total usage metric with bucket label
-		m.totalWaterUsage.WithLabelValues(deviceID, deviceName, location, bucket).Set(totalUsage)
 	}
 }
 
@@ -189,6 +168,10 @@ type FlumeExporter struct {
 	client  *FlumeClient
 	metrics *Metrics
 	config  *Config
+
+	// Track when daily total water usage was last collected
+	lastDailyTotalCollection time.Time
+	dailyCollectionMutex     sync.Mutex
 }
 
 // NewFlumeExporter creates a new Flume exporter
@@ -214,6 +197,58 @@ func (e *FlumeExporter) shouldProcessDevice(deviceID string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// shouldCollectDailyTotalWaterUsage checks if daily total water usage should be collected
+// Collects twice per day: once in the morning (around 6 AM) and once in the evening (around 6 PM)
+func (e *FlumeExporter) shouldCollectDailyTotalWaterUsage() bool {
+	e.dailyCollectionMutex.Lock()
+	defer e.dailyCollectionMutex.Unlock()
+
+	now := time.Now()
+
+	// If this is the first collection (zero time), always collect
+	if e.lastDailyTotalCollection.IsZero() {
+		e.lastDailyTotalCollection = now
+		return true
+	}
+
+	// Check if we've already collected today
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	lastCollectionDay := time.Date(e.lastDailyTotalCollection.Year(), e.lastDailyTotalCollection.Month(), e.lastDailyTotalCollection.Day(), 0, 0, 0, 0, e.lastDailyTotalCollection.Location())
+
+	// If it's a new day, collect
+	if !today.Equal(lastCollectionDay) {
+		e.lastDailyTotalCollection = now
+		return true
+	}
+
+	// If it's the same day, check if we've collected twice already
+	// First collection: around 6 AM (5-7 AM window)
+	// Second collection: around 6 PM (5-7 PM window)
+	hour := now.Hour()
+
+	// Check if we're in the morning window (5-7 AM) and haven't collected yet this morning
+	if hour >= 5 && hour <= 7 {
+		// Check if we've already collected this morning (before 12 PM)
+		if e.lastDailyTotalCollection.Hour() < 12 {
+			return false // Already collected this morning
+		}
+		e.lastDailyTotalCollection = now
+		return true
+	}
+
+	// Check if we're in the evening window (5-7 PM) and haven't collected yet this evening
+	if hour >= 17 && hour <= 19 {
+		// Check if we've already collected this evening (after 12 PM)
+		if e.lastDailyTotalCollection.Hour() >= 12 {
+			return false // Already collected this evening
+		}
+		e.lastDailyTotalCollection = now
+		return true
+	}
+
 	return false
 }
 
@@ -289,74 +324,42 @@ func (e *FlumeExporter) CollectMetrics() {
 			log.Printf("Flow rate for device %s: %.2f %s", device.ID, flowRate.Value, flowRate.Units)
 		}
 
-		// Get hourly usage for the last hour
-		now := time.Now()
-		hourAgo := now.Add(-1 * time.Hour)
+		// Check if we should collect daily total water usage (twice per day + on start)
+		if e.shouldCollectDailyTotalWaterUsage() {
+			log.Printf("Collecting daily total water usage for device %s (scheduled collection)", device.ID)
 
-		start = time.Now()
-		hourlyUsage, err := e.client.QueryWaterUsage(device.ID, "HR", hourAgo, &now)
-		duration = time.Since(start)
+			// Get daily total water usage for the last 30 days
+			now := time.Now()
+			thirtyDaysAgo := now.AddDate(0, 0, -30)
+			startOfThirtyDaysAgo := time.Date(thirtyDaysAgo.Year(), thirtyDaysAgo.Month(), thirtyDaysAgo.Day(), 0, 0, 0, 0, now.Location())
 
-		if err != nil {
-			log.Printf("Error getting hourly usage for device %s: %v", device.ID, err)
-			e.metrics.RecordScrapeMetrics("hourly_usage", duration, false)
-		} else {
-			e.metrics.RecordScrapeMetrics("hourly_usage", duration, true)
-			// Use device ID as device name if location name is empty, otherwise use location name
-			deviceName := device.Location.Name
-			if deviceName == "" {
-				deviceName = device.ID
-			}
-			e.metrics.UpdateWaterUsage(device.ID, deviceName, device.Location.Name, hourlyUsage)
-		}
+			start = time.Now()
+			dailyTotalUsage, err := e.client.QueryDailyTotalWaterUsage(device.ID, startOfThirtyDaysAgo, now)
+			duration = time.Since(start)
 
-		// Get daily usage for today
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-		start = time.Now()
-		dailyUsage, err := e.client.QueryWaterUsage(device.ID, "DAY", today, &now)
-		duration = time.Since(start)
-
-		if err != nil {
-			log.Printf("Error getting daily usage for device %s: %v", device.ID, err)
-			e.metrics.RecordScrapeMetrics("daily_usage", duration, false)
-		} else {
-			e.metrics.RecordScrapeMetrics("daily_usage", duration, true)
-			// Use device ID as device name if location name is empty, otherwise use location name
-			deviceName := device.Location.Name
-			if deviceName == "" {
-				deviceName = device.ID
-			}
-			e.metrics.UpdateWaterUsage(device.ID, deviceName, device.Location.Name, dailyUsage)
-		}
-
-		// Get daily total water usage for the last 30 days
-		thirtyDaysAgo := now.AddDate(0, 0, -30)
-		startOfThirtyDaysAgo := time.Date(thirtyDaysAgo.Year(), thirtyDaysAgo.Month(), thirtyDaysAgo.Day(), 0, 0, 0, 0, now.Location())
-
-		start = time.Now()
-		dailyTotalUsage, err := e.client.QueryDailyTotalWaterUsage(device.ID, startOfThirtyDaysAgo, now)
-		duration = time.Since(start)
-
-		if err != nil {
-			log.Printf("Error getting daily total water usage for device %s: %v", device.ID, err)
-			e.metrics.RecordScrapeMetrics("daily_total_usage", duration, false)
-		} else {
-			e.metrics.RecordScrapeMetrics("daily_total_usage", duration, true)
-			// Use device ID as device name if location name is empty, otherwise use location name
-			deviceName := device.Location.Name
-			if deviceName == "" {
-				deviceName = device.ID
-			}
-
-			// Update daily total water usage metrics for each day
-			for _, data := range dailyTotalUsage.Data {
-				for _, dayData := range data.DailyTotalWaterUsage {
-					// Extract date from datetime (format: "2025-08-01 00:00:00")
-					date := dayData.DateTime[:10] // Get just the date part
-					e.metrics.UpdateDailyTotalWaterUsage(device.ID, deviceName, device.Location.Name, date, dayData.Value)
+			if err != nil {
+				log.Printf("Error getting daily total water usage for device %s: %v", device.ID, err)
+				e.metrics.RecordScrapeMetrics("daily_total_usage", duration, false)
+			} else {
+				e.metrics.RecordScrapeMetrics("daily_total_usage", duration, true)
+				// Use device ID as device name if location name is empty, otherwise use location name
+				deviceName := device.Location.Name
+				if deviceName == "" {
+					deviceName = device.ID
 				}
+
+				// Update daily total water usage metrics for each day
+				for _, data := range dailyTotalUsage.Data {
+					for _, dayData := range data.DailyTotalWaterUsage {
+						// Extract date from datetime (format: "2025-08-01 00:00:00")
+						date := dayData.DateTime[:10] // Get just the date part
+						e.metrics.UpdateDailyTotalWaterUsage(device.ID, deviceName, device.Location.Name, date, dayData.Value)
+					}
+				}
+				log.Printf("Updated daily total water usage for device %s with %d days of data", device.ID, len(dailyTotalUsage.Data))
 			}
+		} else {
+			log.Printf("Skipping daily total water usage collection for device %s (not scheduled)", device.ID)
 		}
 	}
 

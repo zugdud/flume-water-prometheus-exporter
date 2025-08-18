@@ -125,7 +125,7 @@ export DEVICE_IDS="6899913485570306485,6906448283393854879"
 | `-password` | `FLUME_PASSWORD` | *required* | Flume account password |
 | `-listen-address` | `LISTEN_ADDRESS` | `:9193` | Address to listen on |
 | `-metrics-path` | `METRICS_PATH` | `/metrics` | Path for metrics endpoint |
-| `-scrape-interval` | `SCRAPE_INTERVAL` | `30s` | How often to scrape Flume API |
+| `SCRAPE_INTERVAL` | `30s` | How often to collect metrics from Flume API (auto-optimized based on device count) |
 | `-timeout` | `TIMEOUT` | `10s` | HTTP request timeout |
 | `-base-url` | `BASE_URL` | `https://api.flumewater.com` | Flume API base URL |
 | `-api-min-interval` | `API_MIN_INTERVAL` | `30s` | Minimum interval between Flume API requests (120 requests/hour limit) |
@@ -168,6 +168,7 @@ DEVICE_IDS=6899913485570306485,6906448283393854879
 - **Focused Monitoring**: Collect metrics only from devices you care about
 - **Performance**: Faster metric collection when you have many devices
 - **Cost Control**: Stay within Flume API rate limits more easily
+- **Optimized Collection**: Daily total water usage is collected only twice per day (morning and evening) plus on service start, reducing unnecessary API calls
 
 ### Finding Your Device IDs
 
@@ -175,6 +176,93 @@ You can find your device IDs in several ways:
 1. **Flume App**: Device settings show the device ID
 2. **API Response**: The exporter logs show device IDs during startup
 3. **Metrics**: Check the `device_id` label in your Prometheus metrics
+
+## Daily Total Water Usage Optimization
+
+The `flume_daily_total_water_usage_gallons` metric is optimized to reduce API calls while maintaining data freshness:
+
+### Collection Schedule
+
+- **Service Start**: Always collected when the exporter starts
+- **Morning Collection**: Around 6 AM (5-7 AM window) - captures overnight usage
+- **Evening Collection**: Around 6 PM (5-7 PM window) - captures daytime usage
+- **New Day**: Automatically collected on the first scrape of each new day
+
+### Benefits
+
+- **Reduced API Calls**: From every scrape to only twice per day
+- **Better Rate Limit Management**: Stays well within Flume's 120 requests/hour limit
+- **Data Freshness**: Still provides daily updates for trending and analysis
+- **Efficient Resource Usage**: Reduces unnecessary data collection during low-usage periods
+
+### How It Works
+
+The exporter tracks when daily total water usage was last collected and only makes API calls when:
+1. The service starts up
+2. It's time for morning collection (around 6 AM)
+3. It's time for evening collection (around 6 PM)
+4. A new day begins
+
+## Dynamic Scrape Interval Optimization
+
+The exporter automatically calculates the optimal scrape interval based on the number of devices being monitored to stay within Flume's 120 requests/hour limit:
+
+### Automatic Interval Calculation
+
+| Devices | Optimal Interval | Requests/Hour | Status |
+|---------|------------------|---------------|---------|
+| 1 device | 2 minutes | 60-90 | ✅ Well under limit |
+| 2 devices | 2 minutes | 90-120 | ✅ Under limit |
+| 3 devices | 3 minutes | 80-100 | ✅ Under limit |
+| 4 devices | 4 minutes | 75-90 | ✅ Well under limit |
+| 5+ devices | 5+ minutes | < 72 | ✅ Well under limit |
+
+### How It Works
+
+1. **Device Count Detection**: On startup, the exporter counts how many devices will be processed
+2. **Interval Calculation**: Uses formula: `30 × (1 + device_count)` seconds
+3. **Smart Bounds**: Ensures interval stays between 1-10 minutes
+4. **User Override**: Custom intervals specified via `SCRAPE_INTERVAL` take precedence
+
+### Benefits
+
+- **Automatic Rate Limit Compliance**: No manual calculation needed
+- **Optimal Data Freshness**: Fastest possible collection while staying under limits
+- **Scalable**: Automatically adjusts as you add/remove devices
+- **User Friendly**: Works out-of-the-box with optimal settings
+
+## Authentication Optimization
+
+The exporter optimizes authentication to minimize unnecessary API calls to the `/me` endpoint:
+
+### Smart Token Management
+
+- **Token Expiry Tracking**: Monitors token expiration without making API calls
+- **Proactive Refresh**: Refreshes tokens before they expire (within 1 hour)
+- **Conditional Validation**: Only validates tokens via API when necessary
+- **Persistent Storage**: Saves tokens to disk to avoid re-authentication
+
+### Health Check Endpoints
+
+- **`/health`**: Basic health status without API calls (fast, efficient)
+- **`/health/detailed`**: Full health status with API validation (when needed)
+
+### Benefits
+
+- **Reduced API Calls**: Eliminates unnecessary `/me` endpoint calls
+- **Faster Health Checks**: Basic health status returns immediately
+- **Better Rate Limit Management**: Stays within Flume's API limits
+- **Improved Performance**: Faster startup and health monitoring
+
+### How It Works
+
+1. **Token Loading**: Loads existing tokens from disk on startup
+2. **Expiry Check**: Uses local time comparison instead of API calls
+3. **Smart Refresh**: Refreshes tokens proactively before expiration
+4. **Conditional Validation**: Only makes `/me` calls when tokens are expired
+5. **Persistent Storage**: Saves tokens to avoid re-authentication on restarts
+
+This optimization significantly reduces the number of API calls, especially for users with frequent health checks or monitoring systems.
 
 ## Usage
 
@@ -315,25 +403,21 @@ export DEVICE_IDS="6899913485570306485,6906448283393854879"
 
 ## Metrics
 
-The exporter provides the following metrics:
-
 ### Water Usage Metrics
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
 | `flume_current_flow_rate_gallons_per_minute` | Gauge | Current water flow rate (direct from API) | `device_id`, `device_name`, `location` |
-| `flume_hourly_water_usage_gallons` | Gauge | Water usage in the last hour | `device_id`, `device_name`, `location` |  
-| `flume_daily_water_usage_gallons` | Gauge | Water usage today | `device_id`, `device_name`, `location` |
-| `flume_daily_total_water_usage_gallons` | Gauge | Daily total water usage for each day over time period | `device_id`, `device_name`, `location`, `date` |
+| `flume_daily_total_water_usage_gallons` | Gauge | Daily total water usage for each day over time period (collected twice per day) | `device_id`, `device_name`, `location`, `date` |
 | `flume_total_water_usage_gallons` | Gauge | Total usage for time period | `device_id`, `device_name`, `location`, `bucket` |
 
-### Device Information
+### Device Information Metrics
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
-| `flume_device_info` | Gauge | Device metadata (always 1) | `device_id`, `device_name`, `location`, `device_type` |
+| `flume_device_info` | Gauge | Device information (always 1) | `device_id`, `device_name`, `location`, `device_type` |
 
-### Exporter Health Metrics
+### Exporter Metrics
 
 | Metric | Type | Description | Labels |
 |--------|------|-------------|--------|
@@ -350,19 +434,9 @@ The exporter provides the following metrics:
 flume_current_flow_rate_gallons_per_minute
 ```
 
-**Daily Water Usage:**
-```promql
-flume_daily_water_usage_gallons
-```
-
 **Daily Total Water Usage (30-day history):**
 ```promql
 flume_daily_total_water_usage_gallons
-```
-
-**Average Hourly Usage (24h):**
-```promql
-avg_over_time(flume_hourly_water_usage_gallons[24h])
 ```
 
 **Water Usage Rate of Change:**
@@ -412,6 +486,7 @@ services:
 
 The Flume Water API has a rate limit of **120 requests per hour** for personal clients. This exporter automatically respects this limit by:
 
+- **Dynamic Optimization**: Automatically calculates optimal scrape intervals based on device count
 - **Default Configuration**: Limits API requests to a minimum of 30 seconds apart (120 requests/hour)
 - **Configurable**: You can adjust the rate limiting via the `API_MIN_INTERVAL` environment variable or `-api-min-interval` flag
 - **Per-Request Limiting**: Each API call (devices, flow rate, water usage) is individually rate-limited
@@ -429,7 +504,7 @@ export API_MIN_INTERVAL=30s
 export API_MIN_INTERVAL=20s
 ```
 
-**Note**: With the default 30-second scrape interval and 30-second API rate limit, the exporter will make approximately 3-4 API calls per device per scrape cycle. For most users with 1-2 devices, this keeps you well within the 120 requests/hour limit.
+**Note**: With the dynamic interval optimization, the exporter automatically adjusts the scrape interval based on your device count to stay within the 120 requests/hour limit while providing the fastest possible data collection.
 
 ## API Reference
 

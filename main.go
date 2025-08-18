@@ -50,15 +50,57 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Get authentication status
+		// Get authentication status without making API calls
 		authStatus := client.GetAuthenticationStatus()
 
-		// Try to validate authentication
+		// Only validate authentication if we need to
 		authValid := true
-		if err := client.ValidateAuthentication(); err != nil {
-			authValid = false
-			authStatus["validation_error"] = err.Error()
+
+		if client.needsAuthentication() {
+			log.Printf("Health check: Authentication needed, validating...")
+			if err := client.ValidateAuthentication(); err != nil {
+				authValid = false
+				authStatus["validation_error"] = err.Error()
+			}
+		} else {
+			log.Printf("Health check: Token appears valid, skipping API validation")
+			authStatus["validation_skipped"] = "token_valid"
 		}
+
+		healthData := map[string]interface{}{
+			"status":    "healthy",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"authentication": map[string]interface{}{
+				"valid":  authValid,
+				"status": authStatus,
+			},
+			"config": map[string]interface{}{
+				"base_url":         config.BaseURL,
+				"username":         config.Username,
+				"client_id":        config.ClientID,
+				"scrape_interval":  config.ScrapeInterval.String(),
+				"device_filtering": config.DeviceIDs != "",
+				"device_ids":       config.DeviceIDs,
+			},
+		}
+
+		if !authValid {
+			healthData["status"] = "unhealthy"
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		jsonData, _ := json.MarshalIndent(healthData, "", "  ")
+		w.Write(jsonData)
+	})
+
+	// Add detailed health check endpoint that includes API validation
+	mux.HandleFunc("/health/detailed", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Get detailed authentication status including API validation
+		authStatus := client.GetDetailedAuthenticationStatus()
+
+		authValid := authStatus["api_validation"] == "success" || authStatus["api_validation"] == "skipped"
 
 		healthData := map[string]interface{}{
 			"status":    "healthy",
@@ -95,17 +137,11 @@ func main() {
 <h1>Flume Water Prometheus Exporter</h1>
 <p><a href="` + config.MetricsPath + `">Metrics</a></p>
 <p>This exporter collects water usage metrics from the Flume API and exposes them as Prometheus metrics.</p>
-<h2>Available Metrics:</h2>
+<h2>Available Endpoints:</h2>
 <ul>
-<li><code>flume_current_flow_rate_gallons_per_minute</code> - Current water flow rate</li>
-<li><code>flume_hourly_water_usage_gallons</code> - Hourly water usage</li>
-<li><code>flume_daily_water_usage_gallons</code> - Daily water usage</li>
-<li><code>flume_daily_total_water_usage_gallons</code> - Daily total water usage for each day over time period</li>
-<li><code>flume_total_water_usage_gallons</code> - Total water usage for time periods</li>
-<li><code>flume_device_info</code> - Device information</li>
-<li><code>flume_exporter_scrape_duration_seconds</code> - Time spent scraping API</li>
-<li><code>flume_exporter_scrape_success</code> - Scrape success status</li>
-<li><code>flume_exporter_last_scrape_timestamp_seconds</code> - Last scrape timestamp</li>
+<li><a href="` + config.MetricsPath + `">Metrics</a> - Prometheus metrics</li>
+<li><a href="/health">Health Check</a> - Basic health status (no API calls)</li>
+<li><a href="/health/detailed">Detailed Health</a> - Full health status with API validation</li>
 </ul>
 </body>
 </html>`))
@@ -133,11 +169,9 @@ func main() {
 	go func() {
 		log.Println("Starting authentication in background...")
 
-		// Validate authentication before starting
-		log.Println("Validating authentication...")
-		if err := client.ValidateAuthentication(); err != nil {
-			log.Printf("Authentication validation failed: %v", err)
-			log.Println("Attempting to authenticate...")
+		// Check if we need authentication before starting
+		if client.needsAuthentication() {
+			log.Println("Authentication needed, starting...")
 
 			// Try to authenticate with retry
 			if err := client.AuthenticateWithRetry(3); err != nil {
@@ -148,11 +182,37 @@ func main() {
 
 			log.Println("Authentication successful!")
 		} else {
-			log.Println("Authentication validation successful!")
+			log.Println("Valid tokens found, authentication not needed")
 		}
 
-		// Start periodic metric collection only after successful authentication
+		// Get initial device count to calculate optimal interval
+		devices, err := client.GetDevices()
+		if err != nil {
+			log.Printf("Failed to get initial device count: %v", err)
+			log.Println("Using default scrape interval")
+		} else {
+			// Count devices that will be processed
+			deviceCount := len(devices)
+			if config.DeviceIDs != "" {
+				deviceCount = 0
+				for _, device := range devices {
+					if exporter.shouldProcessDevice(device.ID) {
+						deviceCount++
+					}
+				}
+			}
+
+			// Calculate optimal interval
+			optimalInterval := config.GetScrapeInterval(deviceCount)
+			log.Printf("Device count: %d, Optimal scrape interval: %s", deviceCount, optimalInterval)
+
+			// Update config with optimal interval
+			config.ScrapeInterval = optimalInterval
+		}
+
+		// Start periodic metric collection
 		log.Println("Starting periodic metric collection...")
+		log.Printf("Using scrape interval: %s", config.ScrapeInterval)
 		exporter.StartPeriodicCollection(config.ScrapeInterval)
 	}()
 

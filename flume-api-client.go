@@ -219,36 +219,68 @@ type DevicesResponse struct {
 	Data  []Device `json:"data"`
 }
 
-// isTokenExpired checks if the current access token is expired or will expire soon
+// isTokenExpired checks if the current token is expired
 func (c *FlumeClient) isTokenExpired() bool {
-	// Consider token expired if it expires within the next 5 minutes
+	if c.accessToken == "" {
+		return true
+	}
+
+	// Add a 5-minute buffer to avoid edge cases
 	return time.Now().Add(5 * time.Minute).After(c.tokenExpiry)
 }
 
-// ensureValidToken ensures we have a valid access token, refreshing if necessary
-func (c *FlumeClient) ensureValidToken() error {
-	log.Printf("ensureValidToken: accessToken='%s', refreshToken='%s', tokenExpiry=%v",
-		c.accessToken, c.refreshToken, c.tokenExpiry)
-
-	if c.accessToken == "" || c.isTokenExpired() {
-		log.Printf("ensureValidToken: Token is empty or expired, need to authenticate")
-		if c.refreshToken != "" {
-			// Try to refresh the token first
-			log.Printf("ensureValidToken: Attempting token refresh...")
-			if err := c.refreshAccessToken(); err != nil {
-				// If refresh fails, fall back to full authentication with retry
-				log.Printf("Token refresh failed, falling back to full authentication: %v", err)
-				return c.AuthenticateWithRetry(3)
-			}
-		} else {
-			// No refresh token, need full authentication
-			log.Printf("ensureValidToken: No refresh token, performing full authentication...")
-			return c.AuthenticateWithRetry(3)
-		}
-	} else {
-		log.Printf("ensureValidToken: Token is valid, expiry: %v", c.tokenExpiry)
+// isTokenExpiringSoon checks if the token will expire within the next hour
+func (c *FlumeClient) isTokenExpiringSoon() bool {
+	if c.accessToken == "" {
+		return true
 	}
-	return nil
+
+	// Check if token expires within the next hour
+	return time.Now().Add(1 * time.Hour).After(c.tokenExpiry)
+}
+
+// needsAuthentication checks if we need to authenticate or refresh tokens
+func (c *FlumeClient) needsAuthentication() bool {
+	// No token means we need authentication
+	if c.accessToken == "" {
+		return true
+	}
+
+	// Token expired means we need authentication
+	if c.isTokenExpired() {
+		return true
+	}
+
+	// Token expiring soon means we should refresh
+	if c.isTokenExpiringSoon() && c.refreshToken != "" {
+		return true
+	}
+
+	return false
+}
+
+// ensureValidToken ensures we have a valid token, refreshing if necessary
+func (c *FlumeClient) ensureValidToken() error {
+	// If we don't need authentication, we're good
+	if !c.needsAuthentication() {
+		return nil
+	}
+
+	// If we have a refresh token and token is expiring soon, try to refresh
+	if c.refreshToken != "" && c.isTokenExpiringSoon() && !c.isTokenExpired() {
+		log.Printf("Token expiring soon, attempting to refresh...")
+		if err := c.refreshAccessToken(); err != nil {
+			log.Printf("Failed to refresh token: %v, will re-authenticate", err)
+			// Clear tokens and fall through to full authentication
+			c.clearTokens()
+		} else {
+			return nil // Successfully refreshed
+		}
+	}
+
+	// Need full authentication
+	log.Printf("Performing full authentication...")
+	return c.Authenticate()
 }
 
 // refreshAccessToken refreshes the access token using the refresh token
@@ -820,10 +852,21 @@ func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time
 }
 
 // ValidateAuthentication checks if the current authentication is working by making a test API call
+// This method is optimized to only make API calls when necessary
 func (c *FlumeClient) ValidateAuthentication() error {
 	if c.accessToken == "" {
 		return fmt.Errorf("no access token available")
 	}
+
+	// If token is not expired and we have a valid expiry time, assume it's working
+	// Only make API calls when we actually need to verify
+	if !c.isTokenExpired() && !c.tokenExpiry.IsZero() {
+		log.Printf("Token appears valid (expires at %v), skipping API validation", c.tokenExpiry)
+		return nil
+	}
+
+	// Token is expired or we need to verify it's working, make the API call
+	log.Printf("Token validation needed, making /me API call to verify...")
 
 	// Make a simple API call to test authentication
 	req, err := http.NewRequest("GET", c.baseURL+"/me", nil)
@@ -855,13 +898,15 @@ func (c *FlumeClient) ValidateAuthentication() error {
 	return nil
 }
 
-// GetAuthenticationStatus returns the current authentication status
+// GetAuthenticationStatus returns the current authentication status without making API calls
 func (c *FlumeClient) GetAuthenticationStatus() map[string]interface{} {
 	status := map[string]interface{}{
 		"has_access_token":  c.accessToken != "",
 		"has_refresh_token": c.refreshToken != "",
 		"token_expiry":      c.tokenExpiry,
 		"is_expired":        c.isTokenExpired(),
+		"is_expiring_soon":  c.isTokenExpiringSoon(),
+		"needs_auth":        c.needsAuthentication(),
 		"token_file":        c.tokenFile,
 	}
 
@@ -873,6 +918,28 @@ func (c *FlumeClient) GetAuthenticationStatus() map[string]interface{} {
 	if c.refreshToken != "" {
 		status["refresh_token_length"] = len(c.refreshToken)
 		status["refresh_token_preview"] = c.refreshToken[:min(10, len(c.refreshToken))] + "..."
+	}
+
+	return status
+}
+
+// GetDetailedAuthenticationStatus returns detailed authentication status including API validation
+// This method will make an API call to verify the token is actually working
+func (c *FlumeClient) GetDetailedAuthenticationStatus() map[string]interface{} {
+	status := c.GetAuthenticationStatus()
+
+	// Add API validation status
+	if c.accessToken != "" && !c.isTokenExpired() {
+		// Only make API call if token appears valid
+		if err := c.ValidateAuthentication(); err != nil {
+			status["api_validation"] = "failed"
+			status["validation_error"] = err.Error()
+		} else {
+			status["api_validation"] = "success"
+		}
+	} else {
+		status["api_validation"] = "skipped"
+		status["validation_reason"] = "token_expired_or_missing"
 	}
 
 	return status
