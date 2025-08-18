@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -170,12 +171,6 @@ func main() {
 	log.Println("Exporter stopped")
 }
 
-
-import (
-	"sync"
-	"time"
-)
-
 // RateLimiter ensures that operations are not performed more frequently than a specified interval
 type RateLimiter struct {
 	interval time.Duration
@@ -206,7 +201,7 @@ func (rl *RateLimiter) Wait() {
 			now = time.Now() // Update now after sleeping
 		}
 	}
-	
+
 	rl.last = now
 }
 
