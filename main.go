@@ -36,11 +36,16 @@ func main() {
 		log.Printf("  Device IDs Filter: All devices")
 	}
 
-	// Create Flume client
-	client := NewFlumeClient(config)
+	// Create metrics and exporter
+	metrics := NewMetrics()
+	exporter := NewFlumeExporter(nil, config) // Will set client later
+	exporter.metrics = metrics
 
-	// Create exporter
-	exporter := NewFlumeExporter(client, config)
+	// Create Flume client
+	client := NewFlumeClient(config, metrics)
+
+	// Set the client in the exporter
+	exporter.client = client
 
 	// Setup HTTP server
 	mux := http.NewServeMux()

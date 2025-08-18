@@ -424,6 +424,7 @@ export DEVICE_IDS="6899913485570306485,6906448283393854879"
 | `flume_exporter_scrape_duration_seconds` | Gauge | Time spent scraping API | `endpoint` |
 | `flume_exporter_scrape_success` | Gauge | Whether last scrape succeeded (1/0) | `endpoint` |
 | `flume_exporter_last_scrape_timestamp_seconds` | Gauge | Unix timestamp of last scrape | `endpoint` |
+| `flume_exporter_rate_limit_errors_total` | Counter | Total number of rate limit errors (429) encountered | `endpoint` |
 
 ## Example Queries
 
@@ -442,6 +443,11 @@ flume_daily_total_water_usage_gallons
 **Water Usage Rate of Change:**
 ```promql
 rate(flume_total_water_usage_gallons[5m]) * 60
+```
+
+**Rate Limit Errors (429):**
+```promql
+flume_exporter_rate_limit_errors_total
 ```
 
 ## Docker
@@ -491,6 +497,7 @@ The Flume Water API has a rate limit of **120 requests per hour** for personal c
 - **Configurable**: You can adjust the rate limiting via the `API_MIN_INTERVAL` environment variable or `-api-min-interval` flag
 - **Per-Request Limiting**: Each API call (devices, flow rate, water usage) is individually rate-limited
 - **Automatic Throttling**: The exporter will automatically wait between requests to stay within limits
+- **Rate Limit Monitoring**: Tracks 429 errors to help identify when limits are exceeded
 
 **Example Rate Limiting Configuration:**
 ```bash
@@ -505,6 +512,53 @@ export API_MIN_INTERVAL=20s
 ```
 
 **Note**: With the dynamic interval optimization, the exporter automatically adjusts the scrape interval based on your device count to stay within the 120 requests/hour limit while providing the fastest possible data collection.
+
+## Rate Limit Monitoring
+
+The exporter now includes built-in monitoring for API rate limit violations:
+
+### New Metric: `flume_exporter_rate_limit_errors_total`
+
+This **counter** metric tracks the total number of 429 (Too Many Requests) errors encountered from the Flume API.
+
+**Labels:**
+- `endpoint`: Which API endpoint hit the rate limit (e.g., `devices`, `flow_rate`, `daily_total_water_usage`, `water_usage`)
+
+### Monitoring Rate Limit Errors
+
+**Grafana Alert Example:**
+```promql
+# Alert if rate limit errors occur
+flume_exporter_rate_limit_errors_total > 0
+```
+
+**Rate of Rate Limit Errors:**
+```promql
+# How many rate limit errors per hour
+rate(flume_exporter_rate_limit_errors_total[1h])
+```
+
+**Rate Limit Errors by Endpoint:**
+```promql
+# Group by endpoint to see which calls are hitting limits
+flume_exporter_rate_limit_errors_total
+```
+
+### What This Tells You
+
+- **`> 0`**: You're hitting Flume's API rate limits
+- **High values**: Your configuration is too aggressive
+- **Specific endpoints**: Which API calls are causing issues
+- **Trends**: Whether rate limiting is getting worse over time
+
+### Recommended Actions
+
+1. **Increase `API_MIN_INTERVAL`**: Add more delay between API calls
+2. **Increase `SCRAPE_INTERVAL`**: Collect data less frequently
+3. **Filter devices**: Use `DEVICE_IDS` to monitor fewer devices
+4. **Check logs**: Look for "Rate limit exceeded" messages
+
+This monitoring helps you optimize your configuration to stay within Flume's API limits while maintaining the best possible data collection frequency.
 
 ## API Reference
 

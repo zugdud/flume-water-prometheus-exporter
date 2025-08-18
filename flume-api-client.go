@@ -28,6 +28,7 @@ type FlumeClient struct {
 	tokenExpiry  time.Time
 	tokenFile    string
 	rateLimiter  *RateLimiter
+	metrics      *Metrics
 }
 
 // TokenData represents the token data structure for persistence
@@ -42,7 +43,7 @@ type TokenData struct {
 }
 
 // NewFlumeClient creates a new Flume API client
-func NewFlumeClient(config *Config) *FlumeClient {
+func NewFlumeClient(config *Config, metrics *Metrics) *FlumeClient {
 	// Create token file path in user's home directory
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -62,6 +63,7 @@ func NewFlumeClient(config *Config) *FlumeClient {
 		password:     config.Password,
 		tokenFile:    tokenFile,
 		rateLimiter:  NewRateLimiter(config.APIMinInterval),
+		metrics:      metrics,
 	}
 
 	// Try to load existing tokens
@@ -525,6 +527,11 @@ func (c *FlumeClient) GetDevices() ([]Device, error) {
 	}
 	defer resp.Body.Close()
 
+	// Check for rate limit error first
+	if err := c.checkRateLimitError(resp, "devices"); err != nil {
+		return nil, err
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("devices request failed with status %d: %s", resp.StatusCode, string(body))
@@ -650,6 +657,11 @@ func (c *FlumeClient) GetCurrentFlowRate(deviceID string) (*FlowRateResponse, er
 	}
 	defer resp.Body.Close()
 
+	// Check for rate limit error first
+	if err := c.checkRateLimitError(resp, "flow_rate"); err != nil {
+		return nil, err
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("flow rate request failed with status %d: %s", resp.StatusCode, string(body))
@@ -746,6 +758,11 @@ func (c *FlumeClient) QueryDailyTotalWaterUsage(deviceID string, since time.Time
 	}
 	defer resp.Body.Close()
 
+	// Check for rate limit error first
+	if err := c.checkRateLimitError(resp, "daily_total_water_usage"); err != nil {
+		return nil, err
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("query request failed with status %d: %s", resp.StatusCode, string(body))
@@ -817,6 +834,11 @@ func (c *FlumeClient) QueryWaterUsage(deviceID string, bucket string, since time
 		return nil, fmt.Errorf("failed to send query request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Check for rate limit error first
+	if err := c.checkRateLimitError(resp, "water_usage"); err != nil {
+		return nil, err
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -992,4 +1014,17 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// checkRateLimitError checks if the response indicates a rate limit error (429) and records it
+func (c *FlumeClient) checkRateLimitError(resp *http.Response, endpoint string) error {
+	if resp.StatusCode == http.StatusTooManyRequests { // 429
+		log.Printf("Rate limit exceeded for endpoint %s (429 Too Many Requests)", endpoint)
+		// Record the rate limit error in metrics if available
+		if c.metrics != nil {
+			c.metrics.RecordRateLimitError(endpoint)
+		}
+		return fmt.Errorf("rate limit exceeded (429) for endpoint %s", endpoint)
+	}
+	return nil
 }

@@ -26,6 +26,9 @@ type Metrics struct {
 	scrapeDuration *prometheus.GaugeVec
 	scrapeSuccess  *prometheus.GaugeVec
 	lastScrapeTime *prometheus.GaugeVec
+
+	// API rate limit metrics
+	rateLimitErrors *prometheus.CounterVec
 }
 
 // NewMetrics creates and registers all Prometheus metrics
@@ -86,6 +89,14 @@ func NewMetrics() *Metrics {
 			},
 			[]string{"endpoint"},
 		),
+
+		rateLimitErrors: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "flume_exporter_rate_limit_errors_total",
+				Help: "Total number of rate limit errors encountered during Flume API scraping",
+			},
+			[]string{"endpoint"},
+		),
 	}
 
 	// Register all metrics
@@ -97,6 +108,7 @@ func NewMetrics() *Metrics {
 		m.scrapeDuration,
 		m.scrapeSuccess,
 		m.lastScrapeTime,
+		m.rateLimitErrors,
 	)
 
 	return m
@@ -151,16 +163,20 @@ func (m *Metrics) UpdateDeviceInfo(device Device, deviceName string) {
 	).Set(1)
 }
 
-// RecordScrapeMetrics records metrics about the scrape process
+// RecordScrapeMetrics records metrics about a scrape operation
 func (m *Metrics) RecordScrapeMetrics(endpoint string, duration time.Duration, success bool) {
 	m.scrapeDuration.WithLabelValues(endpoint).Set(duration.Seconds())
-	m.lastScrapeTime.WithLabelValues(endpoint).Set(float64(time.Now().Unix()))
-
-	successValue := 0.0
 	if success {
-		successValue = 1.0
+		m.scrapeSuccess.WithLabelValues(endpoint).Set(1)
+	} else {
+		m.scrapeSuccess.WithLabelValues(endpoint).Set(0)
 	}
-	m.scrapeSuccess.WithLabelValues(endpoint).Set(successValue)
+	m.lastScrapeTime.WithLabelValues(endpoint).Set(float64(time.Now().Unix()))
+}
+
+// RecordRateLimitError records when a rate limit error (429) is encountered
+func (m *Metrics) RecordRateLimitError(endpoint string) {
+	m.rateLimitErrors.WithLabelValues(endpoint).Inc()
 }
 
 // FlumeExporter handles the collection of metrics from Flume API
